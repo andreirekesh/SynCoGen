@@ -1,0 +1,9 @@
+# MSE Loss Configuration
+
+# ============================================================================
+# MSE LOSS
+# ============================================================================
+
+MSELoss.coef = 1.0
+MSELoss.time_weighted = False
+MSELoss.square_time_weight = False

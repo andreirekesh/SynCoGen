@@ -1,0 +1,6 @@
+# Cosine Annealing LR Scheduler Configuration
+
+LRScheduler.cls_name = "CosineAnnealingLR"
+LRScheduler.module = "torch.optim.lr_scheduler"
+LRScheduler.T_max = 100000
+LRScheduler.eta_min = 1e-6

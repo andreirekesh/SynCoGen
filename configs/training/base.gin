@@ -1,0 +1,54 @@
+# Base configuration for SynCoGen
+# This file contains common settings that are shared across different experiments
+
+# ============================================================================
+# DATA CONFIGURATION
+# ============================================================================
+
+# Dataset paths
+DATA_ROOT = "/hpf/projects/mkoziarski/arekesh/SynCoGen/data"
+
+# SyncogenDataManager configuration
+SyncogenDataManager.train_size = 0.9
+SyncogenDataManager.validation_size = 0.1
+SyncogenDataManager.test_size = 0.0
+SyncogenDataManager.overfit = False
+SyncogenDataManager.n_overfit = None
+SyncogenDataManager.batch_size = 32
+SyncogenDataManager.eval_batch_size = 64
+SyncogenDataManager.num_workers = 4
+SyncogenDataManager.pin_memory = True
+SyncogenDataManager.shuffle_train = True
+SyncogenDataManager.sample_conformer = False
+SyncogenDataManager.load_pharmacophores = False
+SyncogenDataManager.load_bonds = False
+SyncogenDataManager.coord_mask_value = 0.0
+SyncogenDataManager.valid_seed = None
+SyncogenDataManager.max_bbs = 5
+
+# ============================================================================
+# MODEL / DIFFUSION CONFIGURATION
+# ============================================================================
+
+# Diffusion training defaults
+Diffusion.augmentations = ["center", "normalize", "random_rotate"]
+Diffusion.train_rot_align = True
+Diffusion.self_conditioning = True
+Diffusion.time_conditioning = True
+Diffusion.backbone = "semla_pharm"
+Diffusion.use_compat = True
+Diffusion.sampling_eps = 1e-3
+Diffusion.importance_sampling = False
+Diffusion.antithetic_sampling = True
+Diffusion.sampling_noise_removal = True
+Diffusion.generate_eval_samples = True
+Diffusion.sample_every_n_epochs = 1
+Diffusion.num_sample_steps = 100
+Diffusion.optimizer = @Optimizer()
+Diffusion.lr_scheduler = @LRScheduler()
+
+# ============================================================================
+# EMA DEFAULTS
+# ============================================================================
+
+Diffusion.ema_decay = 0.9999

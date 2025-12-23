@@ -1,0 +1,5 @@
+# Warmup + Constant LR Scheduler Configuration (using transformers)
+
+LRScheduler.cls_name = "get_constant_schedule_with_warmup"
+LRScheduler.module = "transformers"
+LRScheduler.num_warmup_steps = 1000

@@ -1,0 +1,1 @@
+"""Syncogen rewrite package."""

@@ -1,0 +1,8 @@
+# Brownian Bridge Noise Schedule Configuration
+
+# ============================================================================
+# BROWNIAN BRIDGE NOISE SCHEDULE
+# ============================================================================
+
+BrownianBridgeNoise.sigma_min = 1e-3
+BrownianBridgeNoise.sigma_max = 1.0

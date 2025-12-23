@@ -1,0 +1,8 @@
+# Geometric Noise Schedule Configuration
+
+# ============================================================================
+# GEOMETRIC NOISE SCHEDULE
+# ============================================================================
+
+GeometricNoise.sigma_min = 1e-3
+GeometricNoise.sigma_max = 1.0

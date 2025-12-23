@@ -1,0 +1,10 @@
+# Bond Length Loss Configuration
+
+# ============================================================================
+# BOND LENGTH LOSS
+# ============================================================================
+
+BondLengthLoss.coef = 1.0
+BondLengthLoss.sqrd = False
+BondLengthLoss.time_weighted = False
+BondLengthLoss.square_time_weight = False

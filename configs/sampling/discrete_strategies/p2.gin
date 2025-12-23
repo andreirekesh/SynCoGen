@@ -1,0 +1,5 @@
+# P2 (Path Planning) Configuration
+
+PathPlanning.score_type = "confidence"
+PathPlanning.temperature = 1.0
+PathPlanning.eta = 1.0

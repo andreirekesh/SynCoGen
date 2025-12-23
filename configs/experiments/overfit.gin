@@ -1,0 +1,88 @@
+# Overfitting Experiment Configuration
+
+include "configs/training/base.gin"
+include "configs/noise/linear.gin"
+include "configs/loss/nll.gin"
+include "configs/loss/mse.gin"
+include "configs/model/semla_pharm.gin"
+include "configs/optim/adamw.gin"
+include "configs/scheduler/warmup_cosine.gin"
+include "configs/training/ema.gin"
+include "configs/training/trainer.gin"
+include "configs/logging/loggers/wandb.gin"
+include "configs/logging/callbacks/checkpoint.gin"
+include "configs/sampling/discrete_strategies/mdlm.gin"
+include "configs/logging/metrics/default.gin"
+
+# Data paths
+SyncogenDataManager.graphs_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/dataset_list_full.pt"
+SyncogenDataManager.conformers_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/mol2s.lmdb"
+SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/pharmacophores.lmdb"
+
+# Trainer
+Trainer.accumulate_grad_batches = 8
+Trainer.logger = @WandbLogger()
+Trainer.callbacks = [@ModelCheckpoint()]
+Trainer.precision = "32"
+
+# Logger
+# WandbLogger.mode = "disabled"
+WandbLogger.name = "overfit_logging_test"
+
+# Data
+SyncogenDataManager.batch_size = 10
+SyncogenDataManager.eval_batch_size = 10
+SyncogenDataManager.load_pharmacophores = True
+SyncogenDataManager.load_bonds = True
+SyncogenDataManager.overfit = True
+SyncogenDataManager.n_overfit = 100
+
+# Optimizer
+Optimizer.lr = 3e-4
+Optimizer.weight_decay = 0.01
+
+# Scheduler
+LRScheduler.num_warmup_steps = 1000
+
+# Diffusion
+Diffusion.discrete_noise = @LinearNoise()
+Diffusion.num_sample_steps = 100
+Diffusion.train_rot_align = True
+Diffusion.self_conditioning = True
+Diffusion.pharm_subset = 7
+Diffusion.losses = [@NLLLoss(), @MSELoss(), @BondLengthLoss(), @PairwiseDistanceLoss(), @SmoothLDDTLoss()]
+Diffusion.generate_eval_samples = True
+Diffusion.sample_every_n_epochs = 1
+Diffusion.discrete_strategy = @MDLM()
+
+# Noise
+LinearNoise.sigma_min = 1e-3
+LinearNoise.sigma_max = 7
+
+# --- Losses: Graph (classification) ---
+NLLLoss.coef = 1.0
+
+# --- Losses: Coordinates (regression) ---
+
+# MSE loss
+MSELoss.coef = 1.0
+MSELoss.time_weighted = True
+
+# Bond length loss
+BondLengthLoss.coef = 2.0
+BondLengthLoss.sqrd = True
+BondLengthLoss.time_weighted = True
+BondLengthLoss.t_threshold = 0.25
+
+# Pairwise distance loss
+PairwiseDistanceLoss.coef = 0.4
+PairwiseDistanceLoss.distance_threshold = 5.0
+PairwiseDistanceLoss.sqrd = True
+PairwiseDistanceLoss.time_weighted = True
+PairwiseDistanceLoss.t_threshold = 0.25
+
+# Smooth LDDT loss
+SmoothLDDTLoss.coef = 0.4
+SmoothLDDTLoss.time_weighted = True 
+SmoothLDDTLoss.sqrd = True
+SmoothLDDTLoss.t_threshold = 0.25

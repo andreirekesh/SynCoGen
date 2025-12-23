@@ -1,0 +1,16 @@
+# Default gin config for Semla backbones (shared for semla and semla_pharm)
+
+SemlaGenerator.d_model = 384
+SemlaGenerator.d_message = 128
+SemlaGenerator.n_coord_sets = 64
+SemlaGenerator.n_layers = 12
+SemlaGenerator.n_head = 32
+SemlaGenerator.d_message_hidden = 128
+SemlaGenerator.d_edge = 128
+SemlaGenerator.coord_norm = 'length'
+SemlaGenerator.self_conditioning = False
+SemlaGenerator.size_emb = 64
+SemlaGenerator.pos_emb = 64
+SemlaGenerator.length = 5
+
+

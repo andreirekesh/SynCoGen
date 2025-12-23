@@ -1,0 +1,7 @@
+# Linear LR Scheduler Configuration
+
+LRScheduler.cls_name = "LinearLR"
+LRScheduler.module = "torch.optim.lr_scheduler"
+LRScheduler.start_factor = 1.0
+LRScheduler.end_factor = 0.01
+LRScheduler.total_iters = 100000

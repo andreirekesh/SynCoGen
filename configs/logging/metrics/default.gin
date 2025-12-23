@@ -1,0 +1,16 @@
+# Default Metrics Configuration
+# Includes all standard sampling metrics
+
+include "configs/logging/metrics/validity.gin"
+include "configs/logging/metrics/uniqueness.gin"
+include "configs/logging/metrics/novelty.gin"
+include "configs/logging/metrics/fragment_usage.gin"
+
+Diffusion.metrics = [
+    @ValidityMetrics(),
+    @UniquenessMetrics(),
+    @NoveltyMetrics(),
+    @FragmentUsageMetrics(),
+    @EnergyMetrics()
+]
+

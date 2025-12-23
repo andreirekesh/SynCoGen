@@ -1,0 +1,8 @@
+# Linear Noise Schedule Configuration
+
+# ============================================================================
+# LINEAR NOISE SCHEDULE
+# ============================================================================
+
+LinearNoise.sigma_min = 0.0
+LinearNoise.sigma_max = 10.0

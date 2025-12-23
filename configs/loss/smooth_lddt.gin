@@ -1,0 +1,8 @@
+# Smooth LDDT Loss Configuration
+
+# ============================================================================
+# SMOOTH LDDT LOSS
+# ============================================================================
+
+SmoothLDDTLoss.cutoff = 5.0
+SmoothLDDTLoss.sqrd = False

@@ -1,0 +1,6 @@
+# Constant LR Scheduler Configuration
+
+LRScheduler.cls_name = "ConstantLR"
+LRScheduler.module = "torch.optim.lr_scheduler"
+LRScheduler.factor = 1.0
+LRScheduler.total_iters = 100000

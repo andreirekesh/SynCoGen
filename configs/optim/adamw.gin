@@ -1,0 +1,7 @@
+# AdamW Optimizer Configuration
+
+Optimizer.cls_name = "AdamW"
+Optimizer.lr = 1e-4
+Optimizer.weight_decay = 0.01
+Optimizer.betas = (0.9, 0.999)
+Optimizer.eps = 1e-8

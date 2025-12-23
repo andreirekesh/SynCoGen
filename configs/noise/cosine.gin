@@ -1,0 +1,10 @@
+# Cosine Noise Schedule Configuration
+
+# ============================================================================
+# COSINE NOISE SCHEDULE
+# ============================================================================
+
+CosineNoise.eps = 1e-3
+
+# For squared cosine:
+# CosineSqrNoise.eps = 1e-3

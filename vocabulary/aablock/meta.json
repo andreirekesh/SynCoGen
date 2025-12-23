@@ -1,0 +1,18 @@
+{
+  "n_building_blocks": 11894,
+  "n_reactions": 71,
+  "n_centers": 5,
+  "max_atoms_per_bb": 16,
+  "n_atom_features": 10,
+  "n_bond_features": 5,
+  "atom_types": [
+    "Br",
+    "C",
+    "Cl",
+    "F",
+    "N",
+    "O",
+    "S"
+  ],
+  "max_centers_per_bb": 5
+}

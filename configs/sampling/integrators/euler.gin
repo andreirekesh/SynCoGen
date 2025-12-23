@@ -1,0 +1,4 @@
+# Euler Integrator Configuration
+
+EulerIntegrator.inference_annealing = False
+EulerIntegrator.annealing_coef = 1.0

@@ -1,0 +1,6 @@
+# Weights & Biases Logger Configuration
+# Uses Lightning's WandbLogger directly via gin.external_configurable()
+
+WandbLogger.save_dir = "logs"
+WandbLogger.project = "syncogen"
+WandbLogger.name = "default"

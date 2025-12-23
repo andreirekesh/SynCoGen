@@ -1,0 +1,12 @@
+# Model Checkpoint Configuration
+# Uses Lightning's ModelCheckpoint directly via gin.external_configurable()
+# Defaults from old hydra configs: checkpoint_every_n_steps.yaml + checkpoint_monitor.yaml
+
+# Checkpoint that saves every N training steps
+ModelCheckpoint.dirpath = "checkpoints"
+ModelCheckpoint.save_top_k = -1
+ModelCheckpoint.save_last = True
+ModelCheckpoint.verbose = True
+ModelCheckpoint.auto_insert_metric_name = False
+ModelCheckpoint.every_n_train_steps = 5000
+
