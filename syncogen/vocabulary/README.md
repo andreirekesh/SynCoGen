@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="data.png" width="400">
+  <img src="data.png" width="800">
 </p>
 
 # Vocabulary Preprocessing

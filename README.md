@@ -6,7 +6,7 @@
 **Syn**thesizabile **CoGen**eration (**SynCoGen**) is a generative small molecule design framework comprised of simultaneous absorbing state discrete diffusion model and continuous flow matching. The discrete diffusion model is based on [Simple and Effective Masked Diffusion Language Models](https://arxiv.org/pdf/2406.07524) for synthesizable molecular generation, based on [this repo](https://github.com/kuleshov-group/mdlm) and using the SUBS parametrization. The continuous flow matching model is a straightforward implementation of conditional flow matching over molecular coordinates. We provide a simple graph transformer as a backbone.
 
 <p align="center">
-  <img src="molmdgm.png" width="400">
+  <img src="molmdgm.png" width="800">
 </p>
 
 Rather than operate on sequences, SynCoGen's discrete component operates on graphs. Masking is performed on both node (B x N x D) and edge (B x N x N x D) matrices.
