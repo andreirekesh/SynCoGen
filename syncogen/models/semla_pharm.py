@@ -966,7 +966,16 @@ class SemlaPharmGenerator(nn.Module):
         else:
             cond_atomics, cond_bonds, cond_coords = None, None, None
 
-        # Compute X_indices AFTER self-cond split (X now has correct BB dimensions)
+        # treat padding as masked nodes in the backbone
+        X_all_zeros = (X == 0).all(dim=-1)  # shape: (bs, n)
+        frag_mask = ~X_all_zeros
+        n_fragments = frag_mask.sum(dim=-1)
+        if X_all_zeros.any():
+            last_feat_idx = X.shape[-1] - 1
+            # Find the indices where X_all_zeros is True
+            idx = X_all_zeros.nonzero(as_tuple=True)  # (batch_idx, node_idx)
+            X[idx[0], idx[1], last_feat_idx] = 1.0
+
         X_indices = X.argmax(dim=-1)
 
         cond_pharm = self.pharm_cond_proj(pharm_types)
@@ -982,8 +991,8 @@ class SemlaPharmGenerator(nn.Module):
         )
         for i in range(bs):
             # Check if any nodes or edges are masked (last dim has 1 in last position)
-            has_masked_nodes = X[i, :, -1].any()
-            has_masked_edges = E[i, :, :, -1].any()
+            has_masked_nodes = X[i, : n_fragments[i], -1].any()
+            has_masked_edges = E[i, : n_fragments[i], : n_fragments[i], -1].any()
 
             if not (has_masked_nodes or has_masked_edges):
                 # No masks - try to compute exact bonds from graph structure

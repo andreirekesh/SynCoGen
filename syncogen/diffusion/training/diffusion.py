@@ -1,4 +1,4 @@
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Dict
 
 import itertools
 
@@ -84,6 +84,9 @@ class Diffusion(L.LightningModule):
         lr_scheduler: LRScheduler = None,
         ema_decay: float = 0.0,
         pharm_subset: int = 7,
+        scale_noise: bool = False,
+        scale_noise_factor: float = 0.2,
+        num_fragments_probs: Optional[Dict[int, float]] = None,
     ):
         super().__init__()
         self.default_device = device
@@ -109,12 +112,33 @@ class Diffusion(L.LightningModule):
         self.generate_eval_samples = generate_eval_samples
         self.sample_every_n_epochs = sample_every_n_epochs
         self.num_sample_steps = num_sample_steps
+        self.scale_noise = scale_noise
+        self.scale_noise_factor = scale_noise_factor
 
         self._optimizer_config = optimizer
         self._lr_scheduler_config = lr_scheduler
 
         # Store pharm_subset for use in training
         self.pharm_subset = pharm_subset
+
+        # Override fragment number probabilities if provided
+        if num_fragments_probs is not None:
+            fragments = list(num_fragments_probs.keys())
+            probs = list(num_fragments_probs.values())
+
+            # Validate probabilities are between 0 and 1
+            if not all(0 <= p <= 1 for p in probs):
+                raise ValueError("All probabilities in num_fragments_probs must be between 0 and 1")
+
+            # Normalize probabilities to sum to 1
+            probs_tensor = torch.tensor(probs, dtype=torch.float)
+            if probs_tensor.sum() == 0:
+                raise ValueError("All probabilities in num_fragments_probs are zero")
+            probs_tensor = probs_tensor / probs_tensor.sum()
+
+            # Set dataloader probabilities directly
+            data_manager.train_length_values = torch.tensor(fragments, dtype=torch.long)
+            data_manager.train_length_probs = probs_tensor
 
         # Set the discrete noise for the discrete strategy
         self.discrete_strategy.discrete_noise = self.discrete_noise
@@ -151,6 +175,20 @@ class Diffusion(L.LightningModule):
 
     def forward(self, *args, **kwargs):
         return self.backbone(*args, **kwargs)
+
+    def _apply_scale_noise(self, coords: Coordinates) -> Coordinates:
+        """Scale coordinates by log(num_atoms) * scale_noise_factor."""
+        atom_mask = coords.atom_mask.tensor
+        coords_tensor = coords.atom_coords
+        mask_flat = (
+            atom_mask.reshape(atom_mask.shape[0], -1)
+            if coords.is_batched
+            else atom_mask.reshape(1, -1)
+        )
+        num_atoms = mask_flat.sum(dim=-1)
+        scale = torch.log(num_atoms + 1e-8).view(-1, 1, 1) * self.scale_noise_factor
+        coords.set_coordinates(coords_tensor * scale)
+        return coords
 
     def _compute_step_loss(self, batch, prefix: str = "train"):
         """Helper function to compute loss for both training and validation steps.
@@ -245,20 +283,23 @@ class Diffusion(L.LightningModule):
 
         # 3.3 Noise the coordinates
         C0_shifted, coords_noised = self._noise_continuous(
-            ground_truth_coords.atom_coords,
+            ground_truth_coords,
             ground_truth_graph_mask,
             partially_noised_graph_mask,
             t,
             prefix=prefix,
         )
-        C0_shifted.attach_bonds(
-            bonds=bonds_dense, bonds_mask=bonds_padding_mask.to(dtype=C0_shifted.atom_coords.dtype)
-        )
+        if bonds_dense is not None:
+            C0_shifted.attach_bonds(
+                bonds=bonds_dense,
+                bonds_mask=bonds_padding_mask.to(dtype=C0_shifted.atom_coords.dtype),
+            )
+
         # STEP 4: Forward pass through the backbone
         Xt, Et, Ct = graph_noised.bb_onehot, graph_noised.rxn_onehot, coords_noised.atom_coords
         cond = (
-            (pharms.types_onehot, pharms.coords, pharms.padding_mask)
-            if pharms is not None
+            (pharms.types_onehot, C0_shifted.pharmacophores, pharms.padding_mask)
+            if pharms is not None and C0_shifted.has_pharmacophores
             else None
         )
         logits_X, logits_E, C0_hat = self.forward(Xt, Et, Ct, atom_mask, cond=cond)
@@ -285,6 +326,7 @@ class Diffusion(L.LightningModule):
         # Compute losses via LossList
         coords_pred = Coordinates(coordinates=C0_hat, atom_mask=ground_truth_graph_mask)
         coords_pred.center()
+
         graph_losses = self.losses.compute_graph(
             log_p_theta_X, log_p_theta_E, ground_truth_graph.node_mask, sigma_factor
         )
@@ -370,18 +412,27 @@ class Diffusion(L.LightningModule):
         Xt_self_cond = torch.zeros_like(Xt)
         Et_self_cond = torch.zeros_like(Et)
         Ct_self_cond = torch.zeros_like(Ct)
-        pharm_types, pharm_pos, pharm_padding_mask = cond
 
         if torch.rand(1).item() < 0.5:
-            Xt_self_cond, Et_self_cond, Ct_self_cond = self.backbone(
-                torch.cat([Xt, Xt_self_cond], dim=-1),
-                torch.cat([Et, Et_self_cond], dim=-1),
-                torch.cat([Ct, Ct_self_cond], dim=-1),
-                atom_mask=atom_mask,
-                pharm_types=pharm_types,
-                pharm_pos=pharm_pos,
-                pharm_padding_mask=pharm_padding_mask,
-            )
+            if cond is not None:  # if pharmacophores are present, use them for self-conditioning
+                pharm_types, pharm_pos, pharm_padding_mask = cond
+                Xt_self_cond, Et_self_cond, Ct_self_cond = self.backbone(
+                    torch.cat([Xt, Xt_self_cond], dim=-1),
+                    torch.cat([Et, Et_self_cond], dim=-1),
+                    torch.cat([Ct, Ct_self_cond], dim=-1),
+                    atom_mask=atom_mask,
+                    pharm_types=pharm_types,
+                    pharm_pos=pharm_pos,
+                    pharm_padding_mask=pharm_padding_mask,
+                )
+            else:  # use the regular backbone for self-conditioning
+                Xt_self_cond, Et_self_cond, Ct_self_cond = self.backbone(
+                    torch.cat([Xt, Xt_self_cond], dim=-1),
+                    torch.cat([Et, Et_self_cond], dim=-1),
+                    torch.cat([Ct, Ct_self_cond], dim=-1),
+                    atom_mask=atom_mask,
+                )
+
             logits_X_subs, logits_E_subs = self._subs_parameterization(
                 BBRxnGraph.from_onehot(Xt, Et), Xt_self_cond, Et_self_cond
             )
@@ -563,7 +614,7 @@ class Diffusion(L.LightningModule):
 
     def _noise_continuous(
         self,
-        C0_tensor: torch.Tensor,
+        ground_truth_coords: Coordinates,
         ground_truth_graph_mask: torch.Tensor,
         partially_noised_graph_mask: torch.Tensor,
         t,
@@ -577,21 +628,30 @@ class Diffusion(L.LightningModule):
         - Create C0_shifted copy with atom mask for modifications
         - Special centering: center by atom-only mask
         - Interpolate via self.interpolator.forward(C0_shifted, C1, t)
-        Returns Coordinates object with noised coordinates
+        Returns (C0_shifted, coords_noised) - both Coordinates objects with pharmacophores attached if present
         """
+        C0_tensor = ground_truth_coords.atom_coords
+
         # Sample simple prior C1 ~ N(0, 1) masked like C0
-        # Create C0_shifted copy with atom mask for modifications
         C1 = Coordinates.random(
             shape=C0_tensor.shape,
             atom_mask=partially_noised_graph_mask,
             device=C0_tensor.device,
             dtype=C0_tensor.dtype,
         )
-        C0_shifted = Coordinates(coordinates=C0_tensor, atom_mask=partially_noised_graph_mask)
-        if C0_shifted.has_pharmacophores:
+
+        # Apply scale noise if enabled (before centering, matching old implementation)
+        if self.scale_noise:
+            C1 = self._apply_scale_noise(C1)
+
+        # Create C0_shifted copy with updated atom mask, preserving pharmacophores
+        C0_shifted = Coordinates(
+            coordinates=C0_tensor.clone(), atom_mask=partially_noised_graph_mask
+        )
+        if ground_truth_coords.has_pharmacophores:
             C0_shifted.attach_pharmacophores(
-                pharm_coords=C0_shifted.pharmacophores.clone(),
-                pharm_padding_mask=C0_shifted.pharm_padding_mask.tensor.clone(),
+                pharm_coords=ground_truth_coords.pharmacophores.clone(),
+                pharm_padding_mask=ground_truth_coords.pharm_padding_mask.clone(),
             )
 
         # Optional alignment of C1 to C0 using Kabsch
@@ -623,7 +683,7 @@ class Diffusion(L.LightningModule):
         if C0_shifted.has_pharmacophores:
             # Shift pharmacophores by the same center offset as atoms
             C0_shifted.pharm_coords = torch.where(
-                C0_shifted.pharm_mask.unsqueeze(-1).bool(),
+                C0_shifted.pharm_padding_mask.unsqueeze(-1).bool(),
                 C0_shifted.pharm_coords + C1_center_valid_only.unsqueeze(1),
                 C0_shifted.pharm_coords,
             )
@@ -632,14 +692,13 @@ class Diffusion(L.LightningModule):
         assert C0_shifted.is_centered(), "C0_shifted must be centered"
         assert C1.is_centered(), "C1 must be centered"
         Ct = self.interpolator(C0_shifted.atom_coords, C1.atom_coords, t)
-        Ct = Ct * partially_noised_graph_mask.unsqueeze(-1)
 
         # Wrap back into Coordinates object
         coords_noised = Coordinates(coordinates=Ct, atom_mask=partially_noised_graph_mask)
         if C0_shifted.has_pharmacophores:
             coords_noised.attach_pharmacophores(
                 pharm_coords=C0_shifted.pharmacophores,
-                pharm_padding_mask=C0_shifted.pharm_padding_mask.tensor,
+                pharm_padding_mask=C0_shifted.pharm_padding_mask,
             )
         return C0_shifted, coords_noised
 
@@ -682,7 +741,7 @@ class Diffusion(L.LightningModule):
         current_graph = BBRxnGraph.masked(
             max_nodes=max_nodes,
             batch_size=batch_size,
-            n_nodes=None if sampled_n_nodes is None else sampled_n_nodes.tolist(),
+            n_nodes=sampled_n_nodes.tolist(),
             device=self.device,
         )
 
@@ -692,10 +751,16 @@ class Diffusion(L.LightningModule):
             atom_mask=current_graph.partial_atom_mask.tensor,
             device=self.device,
         )
+
+        if self.scale_noise:
+            current_coords = self._apply_scale_noise(current_coords)
+
         if cond is not None:
             current_coords.attach_pharmacophores(
                 pharm_coords=pharm_pos, pharm_padding_mask=pharm_padding_mask
             )
+
+        current_coords.center()  # Center initial random coords like old _sample_coord_prior
 
         # 3. Initialize self-conditioning tensors if applicable
         if self.self_conditioning:
@@ -712,6 +777,8 @@ class Diffusion(L.LightningModule):
 
             # 4.1: Center coordinates (mutates current_coords in place)
             current_coords.center()
+            if cond is not None and current_coords.has_pharmacophores:
+                cond = (cond[0], current_coords.pharmacophores, cond[2])
 
             # 4.2: Prepare tensors for backbone (with optional self-conditioning)
             if self.self_conditioning:
@@ -734,9 +801,11 @@ class Diffusion(L.LightningModule):
                 cond=cond,
                 sampling=True,
             )
+
             logits_X, logits_E = self._subs_parameterization(current_graph, logits_X, logits_E)
             p_x0 = logits_X.exp()
             p_e0 = logits_E.exp()
+
             # 4.4: Update via samplers (pass objects, they extract what they need)
             X_new, E_new = self.discrete_strategy.step(current_graph, p_x0, p_e0, t, dt)
             C_new = self.integrator.step(current_coords, C_pred, t, dt)
@@ -756,6 +825,11 @@ class Diffusion(L.LightningModule):
 
         # 5. Final denoising step (optional)
         if self.sampling_noise_removal:
+            # Center coordinates before final forward (like we do in the loop)
+            current_coords.center()
+            if cond is not None and current_coords.has_pharmacophores:
+                cond = (cond[0], current_coords.pharmacophores, cond[2])
+
             t = timesteps[-1] * torch.ones(batch_size, 1, device=self.device)
             if self.self_conditioning:
                 X_tensor = torch.cat([current_graph.bb_onehot, X_self_cond], dim=-1)
@@ -780,7 +854,7 @@ class Diffusion(L.LightningModule):
             # Create final graph from argmax (discrete tokens)
             final_graph = BBRxnGraph.from_indices(p_x0.argmax(dim=-1), p_e0.argmax(dim=-1))
             final_graph.node_mask = current_graph.node_mask
-            final_graph.apply_edge_givens()  # Enforce: diagonals=NO-EDGE, padding=zeros
+            final_graph.apply_edge_givens()
             final_coords = Coordinates(
                 coordinates=C_pred, atom_mask=current_graph.partial_atom_mask.tensor
             )
@@ -925,6 +999,7 @@ class Diffusion(L.LightningModule):
 
         # Scalar metrics via MetricsList
         metrics = self.metrics.compute(graphs, mols)
+        print(metrics)
         if metrics:
             self.log_dict(metrics, on_epoch=True, prog_bar=False, sync_dist=False)
 
@@ -987,4 +1062,5 @@ class Diffusion(L.LightningModule):
         ]["completed"]
 
     def on_save_checkpoint(self, checkpoint):
-        pass
+        if self.ema:
+            checkpoint["ema"] = self.ema.state_dict()

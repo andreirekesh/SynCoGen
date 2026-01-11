@@ -27,33 +27,50 @@ The full SynSpace dataset is available [here](https://tyers.s3.us-west-1.amazona
 
 ### Directory Structure
 ```
-rewrite/
+SynCoGenRW/
 ├─ train.py
 ├─ configs/
+│  ├─ experiments/          # Complete experiment configurations
+│  ├─ training/            # Training and diffusion base configs
+│  ├─ model/               # Model architecture configs
+│  ├─ noise/               # Noise schedule configs
+│  ├─ loss/                # Loss function configs
+│  ├─ optim/               # Optimizer configs
+│  ├─ scheduler/           # Learning rate scheduler configs
+│  ├─ sampling/            # Sampling strategy configs
+│  └─ logging/             # Logging, callbacks, and metrics configs
 ├─ syncogen/
 │  ├─ api/
-│  │  ├─ atomics/
-│  │  ├─ graph/
-│  │  ├─ ops/
-│  │  ├─ rdkit/
-│  │  └─ (molecule.py, pharmacophores.py)
-│  ├─ constants/
-│  ├─ data/
+│  │  ├─ atomics/          # Atomic-level operations (coordinates, masks, pharmacophores)
+│  │  ├─ graph/            # Graph representations (building blocks, reactions)
+│  │  ├─ ops/              # Graph and coordinate operations
+│  │  └─ rdkit/            # RDKit integration for molecule assembly
+│  ├─ constants/           # Constants and vocabulary loading utilities
+│  ├─ data/                # Data loading and preprocessing
 │  ├─ diffusion/
-│  │  ├─ interpolation/
-│  │  ├─ loss/
-│  │  ├─ noise/
-│  │  ├─ sampling/
-│  │  └─ training/
-│  ├─ logging/
-│  │  ├─ loggers/
-│  │  └─ metrics/
-│  ├─ models/
-│  └─ utils/
-└─ vocabulary/
+│  │  ├─ interpolation/    # Interpolation schemes for flow matching
+│  │  ├─ loss/             # Loss function implementations
+│  │  ├─ noise/            # Noise schedule implementations
+│  │  ├─ sampling/         # Sampling strategies and integrators
+│  │  └─ training/         # Training loop and optimizer wrappers
+│  ├─ logging/               # Logging infrastructure (callbacks, loggers, metrics)
+│  ├─ models/             # Model architectures (SEMLA, SEMLA-Pharm)
+│  └─ utils/              # Utility functions (file I/O, RDKit helpers)
+└─ vocabulary/            # Vocabulary directories (building blocks, reactions)
 ```
 
-SynCoGen uses Gin configs, housed in `configs/`. Defaults can be found in `.gin` files corresponding to `@gin.configurable`-decorated classes. 
+### Configuration with Gin
+
+SynCoGen uses [Gin-config](https://github.com/google/gin-config) for experiment configuration. Gin is a lightweight configuration framework that allows you to configure Python classes and functions through simple text files, making it easy to manage complex experiments without modifying code.
+
+Classes and functions decorated with `@gin.configurable` can have their parameters set via `.gin` files. When you instantiate these objects, Gin automatically injects the configured values.
+
+**Config structure**: The `configs/` directory is organized hierarchically:
+- **`experiments/`**: Complete experiment configs that include and compose other configs
+- **Component configs**: Modular configs for specific components (noise schedules, losses, models, etc.)
+- **Base configs**: Shared defaults in `training/base.gin`
+
+**Creating custom configs**: Start with an existing experiment config and modify parameters, or compose new configs by including base configs and component configs. See `configs/README.md` for detailed documentation on the Gin configuration system. 
 
 ### Getting Started
 
@@ -67,6 +84,46 @@ conda activate syncogen
 ### Training
 To start a training run on SynSpace with pharmacophore conditioning, run:
 ```bash
-python train.py --config configs/experiments/pharmacophore.gin --vocab_dir vocabulary/synspace
+python train.py --config configs/experiments/synspace_original_cond.gin --vocab_dir vocabulary/original
 ```
 
+### Sampling
+We provide weights for both unconditional and conditional sampling: [here](https://us-west-1.console.aws.amazon.com/s3/object/tyers?region=us-west-1&prefix=synspace_original_uncond.ckpt) and [here](https://us-west-1.console.aws.amazon.com/s3/object/tyers?region=us-west-1&prefix=synspace_original_cond.ckpt), respectively.
+
+For unconditional 3D molecule generation:
+```bash
+python run_sampling_uncond.py \
+    --config configs/experiments/synspace_original_uncond.gin \
+    --checkpoint_path <path_to_unconditional_checkpoint> \
+    --vocab_dir vocabulary/original \
+    --output_dir samples/synspace_original_uncond_${TIMESTAMP} \
+    --batch_size 100 \
+    --num_batches 1 \
+    --num_steps 100
+```
+
+For conditional sampling with pharmacophore constraints (setup):
+```bash
+python run_sampling_cond.py \
+    --config configs/experiments/synspace_original_cond.gin \
+    --checkpoint_path <path_to_conditional_checkpoint> \
+    --vocab_dir vocabulary/original \
+    --reference_ligand <path_to_reference.sdf> \
+    --output_dir samples/synspace_original_cond_${TIMESTAMP} \
+    --batch_size 100 \
+    --num_batches 1 \
+    --num_steps 100 \
+    --gin "Diffusion.num_fragments_probs = {3: 1.0, 4: 0.0, 5: 0.0}" \
+    --pharm_subset 7
+```
+
+**Sampling arguments**:
+- `--checkpoint_path`: Path to the trained model checkpoint (`.ckpt` file)
+- `--vocab_dir`: Directory containing the vocabulary (building blocks and reactions)
+- `--output_dir`: Directory where generated SDF files will be saved
+- `--batch_size`: Number of molecules to generate
+- `--num_steps`: Number of diffusion steps for sampling (typically 100-200)
+- `--reference_ligand` (conditional only): Path to reference ligand SDF file for pharmacophore extraction
+- `--pharm_subset` (conditional only): Number of pharmacophores to use for conditioning (default: 7)
+
+**Note**: The provided checkpoints were trained to use 7 random pharmacophores for conditional sampling. For unconditional sampling, omit the `--reference_ligand` and `--pharm_subset` arguments.

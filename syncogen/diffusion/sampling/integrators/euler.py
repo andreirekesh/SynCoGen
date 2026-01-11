@@ -4,8 +4,10 @@ import torch
 
 from syncogen.api.atomics.coordinates import Coordinates
 from syncogen.diffusion.sampling.integrators.base import IntegratorBase
+import gin
 
 
+@gin.configurable
 class EulerIntegrator(IntegratorBase):
     """Simple Euler integrator for flow matching.
 

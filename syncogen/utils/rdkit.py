@@ -141,22 +141,39 @@ def build_molecules_from_graphs(
         try:
             mol = graph_i.build_rdkit(return_smiles=False)
             if mol is None:
+                print(
+                    f"[build_molecules_from_graphs] Failure: build_rdkit returned None for graph index {i}"
+                )
                 molecules.append(None)
                 continue
 
             # Set coordinates if provided
             if coords is not None:
-                atom_coords = (
-                    coords[i].reshape(-1, 3) if graphs.is_batched else coords.reshape(-1, 3)
-                )
-                atom_mask = graph_i.ground_truth_atom_mask.tensor.reshape(-1).bool()
-                valid_coords = atom_coords[atom_mask]
+                try:
+                    atom_coords = (
+                        coords[i].reshape(-1, 3) if graphs.is_batched else coords.reshape(-1, 3)
+                    )
+                    atom_mask = graph_i.ground_truth_atom_mask.tensor.reshape(-1).bool()
+                    valid_coords = atom_coords[: atom_mask.shape[0], :][atom_mask]
 
-                if valid_coords.shape[0] == mol.GetNumAtoms():
-                    mol = set_mol_coordinates(mol, valid_coords.cpu())
+                    if valid_coords.shape[0] == mol.GetNumAtoms():
+                        mol = set_mol_coordinates(mol, valid_coords.cpu())
+                    else:
+                        print(
+                            f"[build_molecules_from_graphs] Failure: Coordinate/atom mask size mismatch for graph index {i} "
+                            f"(valid_coords: {valid_coords.shape[0]}, mol atoms: {mol.GetNumAtoms()})"
+                        )
+                        # Don't None it, just print warning.
+                except Exception as sub_e:
+                    print(
+                        f"[build_molecules_from_graphs] Exception in setting coordinates for graph index {i}: {sub_e}"
+                    )
+                    molecules.append(None)
+                    continue
 
             molecules.append(mol)
-        except Exception:
+        except Exception as e:
+            print(f"[build_molecules_from_graphs] Exception for graph index {i}: {e}")
             molecules.append(None)
 
     return molecules

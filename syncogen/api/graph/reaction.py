@@ -37,19 +37,6 @@ class Reaction:
                 self.r2_atom_dropped = False
                 return
 
-            # Check for NO_REACTION (second to last index)
-            if self.reaction_idx == N_REACTIONS - 1:
-                self.is_mask = False
-                self.is_no_reaction = True
-                self.smarts = None
-                self.node1_idx = int(smarts_or_tuple[1])
-                self.node2_idx = int(smarts_or_tuple[2])
-                self.center1_idx = None
-                self.center2_idx = None
-                self.r1_atom_dropped = False
-                self.r2_atom_dropped = False
-                return
-
             # Normal reaction
             self.is_mask = False
             self.is_no_reaction = False
@@ -64,15 +51,11 @@ class Reaction:
     def __str__(self):
         if self.is_mask:
             return "MASK"
-        if self.is_no_reaction:
-            return "NO_REACTION"
         return self.smarts
 
     def __repr__(self):
         if self.is_mask:
             return "MASK"
-        if self.is_no_reaction:
-            return f"Reaction(NO_REACTION, nodes=({self.node1_idx}, {self.node2_idx}))"
         if self.node1_idx is None:
             return f"Reaction(smarts='{self.smarts}')"
         return f"Reaction(({self.reaction_idx}, {self.node1_idx}, {self.node2_idx}, {self.center1_idx}, {self.center2_idx}))"
@@ -81,10 +64,6 @@ class Reaction:
         if self.is_mask and other.is_mask:
             return True
         if self.is_mask or other.is_mask:
-            return False
-        if self.is_no_reaction and other.is_no_reaction:
-            return self.node1_idx == other.node1_idx and self.node2_idx == other.node2_idx
-        if self.is_no_reaction or other.is_no_reaction:
             return False
         return (
             self.smarts == other.smarts

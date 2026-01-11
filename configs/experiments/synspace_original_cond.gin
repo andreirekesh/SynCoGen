@@ -1,9 +1,10 @@
-# Overfitting Experiment Configuration
+# SynCoGen (Original Dataset) Pharmacophore-Conditioned Generation Experiment Configuration
 
 include "configs/training/base.gin"
 include "configs/noise/linear.gin"
 include "configs/loss/nll.gin"
 include "configs/loss/mse.gin"
+include "configs/model/semla_pharm.gin"
 include "configs/model/semla.gin"
 include "configs/optim/adamw.gin"
 include "configs/scheduler/warmup_cosine.gin"
@@ -11,8 +12,11 @@ include "configs/training/ema.gin"
 include "configs/training/trainer.gin"
 include "configs/logging/loggers/wandb.gin"
 include "configs/logging/callbacks/checkpoint.gin"
-include "configs/sampling/discrete_strategies/mdlm.gin"
 include "configs/logging/metrics/default.gin"
+include "configs/sampling/integrators/euler.gin"
+
+# Checkpointing
+ModelCheckpoint.dirpath = "checkpoints/synspace_original_cond"
 
 # Data paths
 SyncogenDataManager.graphs_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/dataset_list_full.pt"
@@ -20,23 +24,21 @@ SyncogenDataManager.conformers_path = "/hpf/projects/mkoziarski/arekesh/data/all
 SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/pharmacophores.lmdb"
 
 # Trainer
-Trainer.accumulate_grad_batches = 1
+Trainer.accumulate_grad_batches = 8
 Trainer.logger = @WandbLogger()
 Trainer.callbacks = [@ModelCheckpoint()]
 Trainer.precision = "32"
-Trainer.check_val_every_n_epoch = 25
 
 # Logger
-WandbLogger.mode = "disabled"
-WandbLogger.name = "overfit_logging_test"
+WandbLogger.name = "synspace_original_cond"
+# WandbLogger.mode = "disabled"
+
 
 # Data
-SyncogenDataManager.batch_size = 10
-SyncogenDataManager.eval_batch_size = 10
-SyncogenDataManager.load_pharmacophores = False
+SyncogenDataManager.batch_size = 64
+SyncogenDataManager.eval_batch_size = 64
+SyncogenDataManager.load_pharmacophores = True
 SyncogenDataManager.load_bonds = True
-SyncogenDataManager.overfit = True
-SyncogenDataManager.n_overfit = 1
 
 # Optimizer
 Optimizer.lr = 3e-4
@@ -48,15 +50,16 @@ LRScheduler.num_warmup_steps = 1000
 # Diffusion
 Diffusion.discrete_noise = @LinearNoise()
 Diffusion.num_sample_steps = 100
-Diffusion.train_rot_align = False
+Diffusion.train_rot_align = True
 Diffusion.self_conditioning = True
 Diffusion.pharm_subset = 7
-Diffusion.losses = [@NLLLoss(), @MSELoss(), @BondLengthLoss(), @PairwiseDistanceLoss()]
+Diffusion.losses = [@NLLLoss(), @MSELoss(), @BondLengthLoss(), @PairwiseDistanceLoss(), @SmoothLDDTLoss()]
 Diffusion.generate_eval_samples = True
-Diffusion.sample_every_n_epochs = 25
+Diffusion.sample_every_n_epochs = 1
 Diffusion.discrete_strategy = @MDLM()
-Diffusion.backbone = "semla"
-Diffusion.augmentations = ["center", "random_rotate", "normalize"]
+Diffusion.backbone = "semla_pharm"
+Diffusion.scale_noise = False
+Diffusion.scale_noise_factor = 0.2
 
 # Noise
 LinearNoise.sigma_min = 1e-3
@@ -89,3 +92,7 @@ SmoothLDDTLoss.coef = 0.4
 SmoothLDDTLoss.time_weighted = True 
 SmoothLDDTLoss.sqrd = True
 SmoothLDDTLoss.t_threshold = 0.25
+
+# Inference Annealing 
+EulerIntegrator.inference_annealing = True
+EulerIntegrator.annealing_coef = 10

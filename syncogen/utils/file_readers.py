@@ -168,14 +168,20 @@ def parse_mol2_file(
 
 
 def mol2_to_coordinates(
-    mol2_data: bytes, mask_value: float = 0.0, return_bonds: bool = False
+    mol2_data: bytes,
+    mask_value: float = 0.0,
+    return_bonds: bool = False,
+    atom_mask: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    """Parse MOL2 data into fragment-grouped coordinates without reaction masking.
+    """Parse MOL2 data into fragment-grouped coordinates, accounting for dropped atoms.
 
     Args:
         mol2_data: MOL2 file contents with building block annotations
         mask_value: Value to use for masked atoms
         return_bonds: If True, also return bonds mapped to flattened padded indices
+        atom_mask: Optional tensor of shape [n_fragments, MAX_ATOMS] indicating valid atom positions.
+                   If provided, atoms are placed skipping over invalid positions (dropped atoms).
+                   If None, atoms are placed sequentially (old behavior, incorrect for reactions).
 
     Returns:
         coords_tensor: torch.Tensor of shape [n_fragments, MAX_ATOMS, 3]
@@ -202,16 +208,35 @@ def mol2_to_coordinates(
         frag_atoms[order_idx].append((atom_idx, coords[atom_idx]))
 
     # Fill coordinates tensor
-    # Keep a per-fragment ordered list of global atom indices to build a mapping
-    frag_atoms_global: Dict[int, List[int]] = {}
+    # Keep a per-fragment mapping: global atom index -> local position index
+    frag_atoms_global: Dict[int, Dict[int, int]] = {}  # order_idx -> {global_idx: local_position}
     for order_idx in sorted(frag_atoms.keys()):
         atoms = frag_atoms[order_idx]
-        frag_atoms_global[order_idx] = []
-        for local_idx, (global_idx, coord) in enumerate(atoms):
-            if local_idx < MAX_ATOMS_PER_BB:
-                coords_tensor[order_idx, local_idx] = torch.tensor(coord, dtype=torch.float32)
-                coords_mask[order_idx, local_idx] = True
-                frag_atoms_global[order_idx].append(global_idx)
+        frag_atoms_global[order_idx] = {}
+
+        if atom_mask is not None and order_idx < atom_mask.shape[0]:
+            # Use atom_mask to skip over invalid positions (dropped atoms)
+            valid_positions = atom_mask[order_idx].bool()  # True = valid position
+            position_idx = 0  # Index into valid positions
+            for global_idx, coord in atoms:
+                # Find next valid position
+                while position_idx < MAX_ATOMS_PER_BB and not valid_positions[position_idx]:
+                    position_idx += 1
+
+                if position_idx < MAX_ATOMS_PER_BB:
+                    coords_tensor[order_idx, position_idx] = torch.tensor(
+                        coord, dtype=torch.float32
+                    )
+                    coords_mask[order_idx, position_idx] = True
+                    frag_atoms_global[order_idx][global_idx] = position_idx  # Store actual position
+                    position_idx += 1
+        else:
+            # Old behavior: place atoms sequentially (incorrect for reactions with dropped atoms)
+            for local_idx, (global_idx, coord) in enumerate(atoms):
+                if local_idx < MAX_ATOMS_PER_BB:
+                    coords_tensor[order_idx, local_idx] = torch.tensor(coord, dtype=torch.float32)
+                    coords_mask[order_idx, local_idx] = True
+                    frag_atoms_global[order_idx][global_idx] = local_idx  # Store actual position
 
     if not return_bonds:
         return coords_tensor, coords_mask, None
@@ -219,7 +244,7 @@ def mol2_to_coordinates(
     # Build mapping: global atom index -> flattened padded index (order_idx * MAX_ATOMS_PER_BB + local_idx)
     global_to_flat: Dict[int, int] = {}
     for order_idx in sorted(frag_atoms_global.keys()):
-        for local_idx, global_idx in enumerate(frag_atoms_global[order_idx]):
+        for global_idx, local_idx in frag_atoms_global[order_idx].items():
             global_to_flat[global_idx] = order_idx * MAX_ATOMS_PER_BB + local_idx
 
     # Convert bond types to integers (consistent with mol2_to_bonds)
@@ -295,6 +320,7 @@ def get_coordinates(
     filetype: str = "mol2",
     mask_value: float = 0.0,
     return_bonds: bool = False,
+    atom_mask: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """Read molecular coordinates and optionally bonds from MOL2 data.
 
@@ -304,6 +330,8 @@ def get_coordinates(
         filetype: File format ('mol2')
         mask_value: Value to use for masked atoms
         return_bonds: If True, also return bond information
+        atom_mask: Optional tensor of shape [n_fragments, MAX_ATOMS] indicating valid positions.
+                   If provided, atoms are placed skipping over invalid positions.
 
     Returns:
         coords_tensor: torch.Tensor of shape [n_fragments, max_atoms_per_fragment, 3]
@@ -315,7 +343,7 @@ def get_coordinates(
 
     mol2_data = get_mol2_data(key, lmdb_path)
     coords, coords_mask, bonds = mol2_to_coordinates(
-        mol2_data, mask_value, return_bonds=return_bonds
+        mol2_data, mask_value, return_bonds=return_bonds, atom_mask=atom_mask
     )
     return coords, coords_mask, bonds
 

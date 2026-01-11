@@ -132,15 +132,8 @@ def is_vocab_loaded() -> bool:
     return _VOCAB is not None
 
 
-DATASET_PRIORS_PATH = ROOT_DIR / "data/dataset_priors.json"
-try:
-    with open(DATASET_PRIORS_PATH) as f:
-        DATASET_PRIORS = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    warnings.warn(f"Dataset priors not found at {DATASET_PRIORS_PATH}.")
-    DATASET_PRIORS = {}
-
 COORDS_STD = 2.7962567753408374
+
 
 SMILES_PATH = ROOT_DIR / "vocabulary/smiles_train_full.txt"
 try:

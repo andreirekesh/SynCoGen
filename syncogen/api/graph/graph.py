@@ -524,7 +524,7 @@ class BBRxnGraph:
         from syncogen.utils.rdkit import build_molecule
 
         if not self.is_batched:
-            n = int(self.lengths[0].item())
+            n = int(self.lengths.item())
             assert (
                 self.unmasked_bbs[:n].all() and self.unmasked_rxns[:n, :n].all()
             ), "Cannot build RDKit molecules with masked building blocks or reactions"
@@ -582,7 +582,7 @@ class BBRxnGraph:
         return f"BBRxnGraph(nodes={self.num_nodes})"
 
     ##########################################################################################
-    # The following function is only used once in the pipeline, in semla_pharm.py and semla.py.
+    # The following function is only used in the backbone and during reconstruction.
     ##########################################################################################
 
     def calculate_bonds(self, reindex: bool = True, as_onehot_adj_tensor: bool = False):

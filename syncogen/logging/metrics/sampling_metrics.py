@@ -169,7 +169,7 @@ class FragmentUsageMetrics(MetricsBase):
 class EnergyMetrics(MetricsBase):
     """Metrics related to molecular energy."""
 
-    def __init__(self, per_atom: bool = True):
+    def __init__(self, per_atom: bool = False):
         self.per_atom = per_atom
 
     def compute(

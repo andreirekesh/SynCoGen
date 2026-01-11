@@ -131,6 +131,34 @@ class Coordinates(AtomReshapable):
         return cls(coords, atom_mask, is_batched)
 
     @classmethod
+    def uniform(
+        cls,
+        shape: Union[torch.Size, Tuple[int, ...]],
+        atom_mask: Optional[torch.Tensor] = None,
+        device: Optional[torch.device] = None,
+        dtype: torch.dtype = torch.float32,
+        is_batched: Optional[bool] = None,
+    ) -> "Coordinates":
+        """Construct with all-zero coordinates (a 'uniform' tensor of zeros).
+
+        Args:
+            shape: Shape of coordinates tensor, e.g. (N, 3) or (B, N, 3)
+            atom_mask: Optional mask tensor. Defaults to all ones.
+            device: Target device
+            dtype: Data type for coordinates
+            is_batched: Whether batched (inferred from shape if None)
+        """
+        coords = torch.ones(shape, device=device, dtype=dtype)
+
+        if atom_mask is None:
+            atom_mask = torch.ones(shape[:-1], device=device, dtype=dtype)
+
+        if not atom_mask.device.type == device:
+            atom_mask = atom_mask.to(device=device)
+
+        return cls(coords, atom_mask, is_batched)
+
+    @classmethod
     def zeros(
         cls,
         shape: Union[torch.Size, Tuple[int, ...]],
