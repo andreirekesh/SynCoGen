@@ -278,15 +278,16 @@ def sample_random_molecules(
                 print(f"Failed to reconstruct smiles or duplicate for {smiles}, {X.argmax(dim=-1)}")
 
     pbar.close()
-    if args.save_conformers:
-        xtb_utils.process_molecules(
-            labeled_molecules,
-            do_xtb=args.xtb,
-            out_path=args.conformer_dir,
-            num_conformers=args.num_conformers,
-            rmsd_threshold=args.rmsd_threshold,
-            energy_cutoff=args.energy_cutoff,
-        )
+    # TODO: Add conformer generation 
+    # if args.save_conformers:
+    #     xtb_utils.process_molecules(
+    #         labeled_molecules,
+    #         do_xtb=args.xtb,
+    #         out_path=args.conformer_dir,
+    #         num_conformers=args.num_conformers,
+    #         rmsd_threshold=args.rmsd_threshold,
+    #         energy_cutoff=args.energy_cutoff,
+    #     )
     return graph_data
 
 
