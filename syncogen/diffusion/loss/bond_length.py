@@ -41,7 +41,9 @@ class BondLengthLoss(LossBase):
             bonds = pred.bonds
             bonds_mask = pred.bonds_mask
         else:
-            raise ValueError("BondLengthLoss requires bonds attached to pred or target Coordinates")
+            raise ValueError(
+                "BondLengthLoss requires bonds attached to pred or target Coordinates"
+            )
 
         # Flatten coordinates to atom dimension for flat indexing
         C_pred = pred.atom_coords

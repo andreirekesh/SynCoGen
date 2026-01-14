@@ -124,7 +124,9 @@ def load_vocabulary(vocab_dir: Path) -> Dict[str, Any]:
 def get_vocab() -> Dict[str, Any]:
     """Get loaded vocabulary or raise if not initialized."""
     if _VOCAB is None:
-        raise RuntimeError("Vocabulary not initialized. Call load_vocabulary(vocab_dir) first.")
+        raise RuntimeError(
+            "Vocabulary not initialized. Call load_vocabulary(vocab_dir) first."
+        )
     return _VOCAB
 
 

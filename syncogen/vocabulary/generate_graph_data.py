@@ -97,7 +97,10 @@ def enumerate_possible_actions(
     ]
 
     descriptors_frag = get_lipinski_descriptors(
-        [Chem.MolFromSmiles(frag_smiles) for _, frag_smiles, _ in frags_and_availability]
+        [
+            Chem.MolFromSmiles(frag_smiles)
+            for _, frag_smiles, _ in frags_and_availability
+        ]
     )
 
     try:
@@ -111,14 +114,18 @@ def enumerate_possible_actions(
         descriptors_frag, descriptors_current, max_mol_weight, max_mol_hbd, max_mol_hba
     )
     frags_and_availability = [
-        frags_and_availability[i] for i in range(len(frags_and_availability)) if lipinski_valid[i]
+        frags_and_availability[i]
+        for i in range(len(frags_and_availability))
+        if lipinski_valid[i]
     ]
     descriptors_frag = [
         descriptors_frag[i] for i in range(len(descriptors_frag)) if lipinski_valid[i]
     ]
 
     # Build results with molecular weights for later sampling
-    for idx, (frag_order, frag_smiles, center_availability) in enumerate(frags_and_availability):
+    for idx, (frag_order, frag_smiles, center_availability) in enumerate(
+        frags_and_availability
+    ):
         frag_idx = BUILDING_BLOCKS_SMI_TO_IDX[frag_smiles]["index"]
         frag_molwt = descriptors_frag[idx]["MW"]
 
@@ -185,7 +192,11 @@ def sample_random_molecules(
             return actions_taken, mfg
 
         possible_actions = enumerate_possible_actions(
-            mfg, comp_r1, comp_r2, bb_descriptors, sample_by_inverse_molwt=sample_by_inverse_molwt
+            mfg,
+            comp_r1,
+            comp_r2,
+            bb_descriptors,
+            sample_by_inverse_molwt=sample_by_inverse_molwt,
         )
 
         # Handle weighted sampling by inverse molecular weight
@@ -224,7 +235,9 @@ def sample_random_molecules(
             new_mfg = mfg.copy()
             new_mfg.add_fragment(*action)
 
-            final_actions, final_mfg = dfs(new_mfg, target_length, actions_taken + [action])
+            final_actions, final_mfg = dfs(
+                new_mfg, target_length, actions_taken + [action]
+            )
             if final_mfg is not None:
                 return final_actions, final_mfg
 
@@ -250,12 +263,16 @@ def sample_random_molecules(
             for idx, action in enumerate(final_actions):
                 frag_indices.append(action[0])
                 if idx > 0:
-                    reaction_info.append((action[1], action[2], idx, action[3], action[4]))
+                    reaction_info.append(
+                        (action[1], action[2], idx, action[3], action[4])
+                    )
 
             adj_matrix = torch.tensor(nx.to_numpy_array(mfg.fragment_graph))
             adj_matrix = torch.maximum(adj_matrix, adj_matrix.T)
 
-            graph = BBRxnGraph.from_tuple(torch.tensor(frag_indices), torch.tensor(reaction_info))
+            graph = BBRxnGraph.from_tuple(
+                torch.tensor(frag_indices), torch.tensor(reaction_info)
+            )
             X = graph.bb_onehot
             E = graph.rxn_onehot
             edge_index = adj_matrix.nonzero().t()
@@ -275,10 +292,12 @@ def sample_random_molecules(
                 labeled_molecules.append(mol)
                 pbar.update(1)
             else:
-                print(f"Failed to reconstruct smiles or duplicate for {smiles}, {X.argmax(dim=-1)}")
+                print(
+                    f"Failed to reconstruct smiles or duplicate for {smiles}, {X.argmax(dim=-1)}"
+                )
 
     pbar.close()
-    # TODO: Add conformer generation 
+    # TODO: Add conformer generation
     # if args.save_conformers:
     #     xtb_utils.process_molecules(
     #         labeled_molecules,
@@ -296,7 +315,11 @@ if __name__ == "__main__":
         description="Sample random molecules by building fragment graphs."
     )
     parser.add_argument(
-        "-n", "--num_samples", type=int, default=100, help="Number of molecules to sample"
+        "-n",
+        "--num_samples",
+        type=int,
+        default=100,
+        help="Number of molecules to sample",
     )
     parser.add_argument(
         "-l",
@@ -307,11 +330,18 @@ if __name__ == "__main__":
         help="Length(s) of molecules in fragments (default: 2). "
         "If multiple are provided, a random one will be chosen for each molecule.",
     )
-    parser.add_argument("--save_graphs", action="store_true", help="Save output as numpy arrays")
     parser.add_argument(
-        "--output_dir", type=str, default="data/molecule_graphs", help="Directory to save molecules"
+        "--save_graphs", action="store_true", help="Save output as numpy arrays"
     )
-    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="data/molecule_graphs",
+        help="Directory to save molecules",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Random seed for reproducibility"
+    )
     parser.add_argument(
         "--sample_by_inverse_molwt",
         action="store_true",
@@ -325,21 +355,34 @@ if __name__ == "__main__":
     )
 
     # Conformer options
-    parser.add_argument("--save_conformers", action="store_true", help="Save conformers")
     parser.add_argument(
-        "--num_conformers", type=int, default=50, help="Number of conformers to generate"
+        "--save_conformers", action="store_true", help="Save conformers"
+    )
+    parser.add_argument(
+        "--num_conformers",
+        type=int,
+        default=50,
+        help="Number of conformers to generate",
     )
     parser.add_argument(
         "--energy_cutoff", type=float, default=10.0, help="Energy cutoff (kcal/mol)"
     )
     parser.add_argument(
-        "--rmsd_threshold", type=float, default=1.5, help="RMSD threshold for clustering"
+        "--rmsd_threshold",
+        type=float,
+        default=1.5,
+        help="RMSD threshold for clustering",
     )
     parser.add_argument(
-        "--conformer_dir", type=str, default="data/conformers", help="Directory to save conformers"
+        "--conformer_dir",
+        type=str,
+        default="data/conformers",
+        help="Directory to save conformers",
     )
     parser.add_argument(
-        "--xtb", action="store_true", help="Run XTB optimization on molecules and save conformers"
+        "--xtb",
+        action="store_true",
+        help="Run XTB optimization on molecules and save conformers",
     )
 
     # Path to compatibility tensor
@@ -360,7 +403,9 @@ if __name__ == "__main__":
 
     # Load compatibilities and decode roles
     compatibility = torch.load(args.compat_path)
-    compatibility = compatibility[:N_BUILDING_BLOCKS, :N_REACTIONS, :N_CENTERS].to(torch.int64)
+    compatibility = compatibility[:N_BUILDING_BLOCKS, :N_REACTIONS, :N_CENTERS].to(
+        torch.int64
+    )
     comp_r1 = (compatibility & 1) != 0  # (n_bbs, n_rxns, n_centers)
     comp_r2 = (compatibility & 2) != 0  # (n_bbs, n_rxns, n_centers)
 
@@ -406,12 +451,18 @@ if __name__ == "__main__":
         print(
             f"Average Molecular Weight: {sum(lipinski_stats['mw'])/len(lipinski_stats['mw']):.2f}"
         )
-        print(f"Average LogP: {sum(lipinski_stats['logp'])/len(lipinski_stats['logp']):.2f}")
-        print(f"Average H-Bond Donors: {sum(lipinski_stats['hbd'])/len(lipinski_stats['hbd']):.2f}")
+        print(
+            f"Average LogP: {sum(lipinski_stats['logp'])/len(lipinski_stats['logp']):.2f}"
+        )
+        print(
+            f"Average H-Bond Donors: {sum(lipinski_stats['hbd'])/len(lipinski_stats['hbd']):.2f}"
+        )
         print(
             f"Average H-Bond Acceptors: {sum(lipinski_stats['hba'])/len(lipinski_stats['hba']):.2f}"
         )
-        print(f"Average QED Score: {sum(lipinski_stats['qed'])/len(lipinski_stats['qed']):.4f}")
+        print(
+            f"Average QED Score: {sum(lipinski_stats['qed'])/len(lipinski_stats['qed']):.4f}"
+        )
     #     print(torch.argmax(molecule.x, dim=-1))
     # print(len(used_bbs))
     # print("UNUSED: ")

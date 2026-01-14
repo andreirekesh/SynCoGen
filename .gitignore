@@ -1,6 +1,7 @@
 # Logs and runs
 logs/
 runs/
+checkpoints/
 
 #Experimental bash scripts
 *.sh

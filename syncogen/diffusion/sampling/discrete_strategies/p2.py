@@ -40,7 +40,9 @@ class PathPlanning(DiscreteStrategyBase):
         self.temperature = temperature
         self.eta = eta
 
-    def _topk_lowest_masking(self, scores: torch.Tensor, cutoff_len: torch.Tensor) -> torch.Tensor:
+    def _topk_lowest_masking(
+        self, scores: torch.Tensor, cutoff_len: torch.Tensor
+    ) -> torch.Tensor:
         """Select tokens with the lowest scores up to cutoff_len per batch.
 
         Args:
@@ -192,9 +194,11 @@ class PathPlanning(DiscreteStrategyBase):
             probs_E, temperature=1.0
         )  # temperature already applied
 
-        # Symmetrize sampled indices (diagonals handled by apply_edge_givens in sampling loop)
+        # Symmetrize sampled indices and set diagonals to NO-EDGE
         e0_indices_upper = torch.triu(e0_indices, diagonal=1)
         e0_indices = e0_indices_upper + e0_indices_upper.transpose(1, 2)
+        diag_indices = torch.arange(N, device=device)
+        e0_indices[:, diag_indices, diag_indices] = edge_mask_idx - 1  # NO-EDGE index
 
         # Compute scores
         if self.score_type == "confidence":
@@ -211,14 +215,23 @@ class PathPlanning(DiscreteStrategyBase):
 
         # Calculate how many edges to mask (count upper triangle only, then double for symmetry)
         if edge_mask is not None:
-            num_valid = edge_mask.triu(diagonal=1).sum(dim=(1, 2), keepdim=True).squeeze(2).float()
+            num_valid = (
+                edge_mask.triu(diagonal=1)
+                .sum(dim=(1, 2), keepdim=True)
+                .squeeze(2)
+                .float()
+            )
         else:
-            num_valid = torch.full((B, 1), N * (N - 1) // 2, device=device, dtype=torch.float)
+            num_valid = torch.full(
+                (B, 1), N * (N - 1) // 2, device=device, dtype=torch.float
+            )
         num_to_mask_E = (2 * num_valid * move_chance_t).long()
 
         # Flatten for top-k selection
         score_E_flat = score_E.view(B, -1)
-        should_mask_E = self._topk_lowest_masking(score_E_flat, num_to_mask_E).view(B, N, N)
+        should_mask_E = self._topk_lowest_masking(score_E_flat, num_to_mask_E).view(
+            B, N, N
+        )
 
         # Build new indices
         E_next_indices = E_indices.clone()

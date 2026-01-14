@@ -15,7 +15,9 @@ class NLLLoss(LossBase):
 
     def __init__(self, coef: float = 1.0):
         # Time-weighting disabled by design for NLL (uses sigma weighting instead)
-        super().__init__(mode="graph", coef=coef, time_weighted=False, square_time_weight=False)
+        super().__init__(
+            mode="graph", coef=coef, time_weighted=False, square_time_weight=False
+        )
 
     def forward(
         self,
@@ -38,7 +40,9 @@ class NLLLoss(LossBase):
         nll_nodes = masked_logp_nodes.sum(dim=1) / denom_nodes  # [B]
 
         # Edge NLL
-        edge_padding_mask = node_padding_mask.unsqueeze(1) & node_padding_mask.unsqueeze(
+        edge_padding_mask = node_padding_mask.unsqueeze(
+            1
+        ) & node_padding_mask.unsqueeze(
             2
         )  # [B,N,N]
         masked_logp_edges = loss_edges * edge_padding_mask

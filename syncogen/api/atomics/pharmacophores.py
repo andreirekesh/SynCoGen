@@ -32,14 +32,19 @@ class ShepherdPharmacophores:
             self.coords = pharm_coords
             self.types = pharm_types
             assert (
-                self.coords.dim() == 3 and self.types.dim() == 2 and padding_mask.dim() == 2
+                self.coords.dim() == 3
+                and self.types.dim() == 2
+                and padding_mask.dim() == 2
             ), "Batched inputs must be [B,P,3], [B,P], [B,P]"
             assert (
                 self.coords.shape[:2] == self.types.shape[:2] == padding_mask.shape[:2]
             ), "Batched coords/types/mask must share [B,P]"
             self.padding_mask = padding_mask
             self.types_onehot = torch.stack(
-                [pharm_indices_to_onehot(self.types[b]) for b in range(self.types.shape[0])]
+                [
+                    pharm_indices_to_onehot(self.types[b])
+                    for b in range(self.types.shape[0])
+                ]
             )
             self.batch_size = self.coords.shape[0]
         else:
@@ -47,7 +52,9 @@ class ShepherdPharmacophores:
             self.coords = pharm_coords
             self.types = pharm_types
             assert (
-                self.coords.dim() == 2 and self.types.dim() == 1 and padding_mask.dim() == 1
+                self.coords.dim() == 2
+                and self.types.dim() == 1
+                and padding_mask.dim() == 1
             ), "Unbatched inputs must be [P,3], [P], [P]"
             assert (
                 self.coords.shape[0] == self.types.shape[0] == padding_mask.shape[0]
@@ -69,7 +76,9 @@ class ShepherdPharmacophores:
             feat_dim = self.coords.shape[-1]
             n_classes = self.types_onehot.shape[-1]
             pos_padded = torch.zeros((B, n_subset, feat_dim), device=self.coords.device)
-            types_padded = torch.zeros((B, n_subset, n_classes), device=self.coords.device)
+            types_padded = torch.zeros(
+                (B, n_subset, n_classes), device=self.coords.device
+            )
             pharm_padding_mask = torch.zeros((B, n_subset), device=self.coords.device)
             types_indices = torch.zeros(
                 (B, n_subset), dtype=self.types.dtype, device=self.types.device
@@ -80,7 +89,9 @@ class ShepherdPharmacophores:
                 valid = (self.padding_mask[b] > 0).nonzero(as_tuple=False).squeeze(-1)
                 cur_len = int(valid.numel())
                 if cur_len > n_subset:
-                    sel = valid[torch.randperm(cur_len, device=self.coords.device)[:n_subset]]
+                    sel = valid[
+                        torch.randperm(cur_len, device=self.coords.device)[:n_subset]
+                    ]
                     pos_sel = self.coords[b][sel]
                     types_idx_sel = self.types[b][sel]
                     types_oh_sel = self.types_onehot[b][sel]
@@ -114,7 +125,9 @@ class ShepherdPharmacophores:
         types_padded[:, -1] = 1
         if cur_len > 0:
             if cur_len > n_subset:
-                sel = valid[torch.randperm(cur_len, device=self.coords.device)[:n_subset]]
+                sel = valid[
+                    torch.randperm(cur_len, device=self.coords.device)[:n_subset]
+                ]
                 pos_sel = self.coords[sel]
                 types_idx_sel = self.types[sel]
                 types_oh_sel = self.types_onehot[sel]
@@ -130,16 +143,18 @@ class ShepherdPharmacophores:
         self.coords = pos_padded
         self.types = types_idx_padded
         self.types_onehot = types_padded
-        self.padding_mask = (torch.arange(n_subset, device=self.coords.device) < cur_len).to(
-            self.coords.dtype
-        )
+        self.padding_mask = (
+            torch.arange(n_subset, device=self.coords.device) < cur_len
+        ).to(self.coords.dtype)
         return self
 
     def pad(self, n_pad):
         """Pad pharmacophores to fixed size n_pad."""
         if self.is_batched:
             B = self.coords.shape[0]
-            pos_padded = torch.zeros((B, n_pad, self.coords.shape[-1]), device=self.coords.device)
+            pos_padded = torch.zeros(
+                (B, n_pad, self.coords.shape[-1]), device=self.coords.device
+            )
             types_padded = torch.zeros(
                 (B, n_pad, self.types_onehot.shape[-1]), device=self.coords.device
             )
@@ -148,13 +163,17 @@ class ShepherdPharmacophores:
                 cur_len = int((self.padding_mask[b] > 0).sum().item())
                 if cur_len == n_pad:
                     pharm_padding_mask[b] = torch.ones_like(pharm_padding_mask[b])
-                    valid = (self.padding_mask[b] > 0).nonzero(as_tuple=False).squeeze(-1)
+                    valid = (
+                        (self.padding_mask[b] > 0).nonzero(as_tuple=False).squeeze(-1)
+                    )
                     pos_padded[b] = self.coords[b, valid]
                     types_padded[b] = self.types_onehot[b, valid]
                 else:
                     pharm_padding_mask[b, :cur_len] = 1
                     types_padded[b, :, -1] = 1
-                    valid = (self.padding_mask[b] > 0).nonzero(as_tuple=False).squeeze(-1)
+                    valid = (
+                        (self.padding_mask[b] > 0).nonzero(as_tuple=False).squeeze(-1)
+                    )
                     valid = valid[:cur_len]
                     types_padded[b, :cur_len] = self.types_onehot[b, valid]
                     pos_padded[b, :cur_len] = self.coords[b, valid]

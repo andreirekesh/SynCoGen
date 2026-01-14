@@ -50,7 +50,9 @@ def parse_args():
     parser.add_argument(
         "--ckpt_path", type=str, default=None, help="Path to checkpoint to resume from"
     )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for reproducibility"
+    )
     return parser.parse_args()
 
 
@@ -96,7 +98,9 @@ def train(
     # Log gin config to wandb (only on rank 0)
     if trainer.logger is not None and trainer.global_rank == 0:
         try:
-            trainer.logger.experiment.config.update({"gin_config": gin.operative_config_str()})
+            trainer.logger.experiment.config.update(
+                {"gin_config": gin.operative_config_str()}
+            )
         except (AttributeError, TypeError):
             pass  # Logger not fully initialized yet, will be logged later
 

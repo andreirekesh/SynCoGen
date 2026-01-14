@@ -7,10 +7,15 @@ import gin
 from torch_geometric.data import Dataset, Data
 from torch_geometric.loader import DataLoader
 import torch
-from syncogen.utils.file_readers import get_coordinates, get_pharmacophores, select_conformer_key
+from syncogen.utils.file_readers import (
+    get_coordinates,
+    get_pharmacophores,
+    select_conformer_key,
+)
 from syncogen.constants.constants import MAX_ATOMS_PER_BB
 from syncogen.api.graph.graph import BBRxnGraph
 from syncogen.data.utils import to_dense_graph
+
 
 @gin.configurable
 class SyncogenDataManager:
@@ -32,14 +37,18 @@ class SyncogenDataManager:
         shuffle_train: bool = True,
         sample_conformer: bool = False,
         load_pharmacophores: bool = False,
-        load_bonds: bool = False, 
+        load_bonds: bool = False,
         coord_mask_value: float = 0.0,
         valid_seed: Optional[int] = None,
-        max_bbs = 5
+        max_bbs=5,
     ):
         self.graphs_path = Path(graphs_path)
-        self.conformers_path = None if conformers_path is None else Path(conformers_path)
-        self.pharmacophore_path = None if pharmacophore_path is None else Path(pharmacophore_path)
+        self.conformers_path = (
+            None if conformers_path is None else Path(conformers_path)
+        )
+        self.pharmacophore_path = (
+            None if pharmacophore_path is None else Path(pharmacophore_path)
+        )
         self.train_size = train_size
         self.validation_size = validation_size
         self.test_size = test_size
@@ -71,9 +80,10 @@ class SyncogenDataManager:
 
     def get_lengths_path(self) -> Path:
         return self.get_split_cache_dir() / "train_lengths_categorical.json"
-    
+
     def get_graph_data_splits(self) -> Dict[str, List[Data]]:
         import copy
+
         split_names = ["train", "validation", "test"]
         cache_dir_splits = self.get_split_cache_dir()
         cache_dir_splits.mkdir(parents=True, exist_ok=True)
@@ -81,7 +91,7 @@ class SyncogenDataManager:
         if not all(self.get_split_path(split).exists() for split in split_names):
             data_list: List[Data] = torch.load(self.graphs_path)
             if self.overfit and self.n_overfit is not None:
-                if self.n_overfit == 1: # single example
+                if self.n_overfit == 1:  # single example
                     data_list = [data_list[0] for _ in range(100)]
                 else:
                     data_list = data_list[: self.n_overfit]
@@ -91,7 +101,7 @@ class SyncogenDataManager:
                 splits: Dict[str, List[Data]] = {
                     "train": train_data,
                     "validation": train_data,
-                    "test": [],  
+                    "test": [],
                 }
             else:
                 total_size = len(data_list)
@@ -104,11 +114,13 @@ class SyncogenDataManager:
                     "validation": data_list[train_end:val_end],
                     "test": data_list[val_end:test_end],
                 }
-            
+
             for split, data in splits.items():
                 torch.save(data, self.get_split_path(split))
         else:
-            splits = {split: torch.load(self.get_split_path(split)) for split in split_names}
+            splits = {
+                split: torch.load(self.get_split_path(split)) for split in split_names
+            }
 
         self._splits_cache = splits
         self._load_or_compute_train_lengths()
@@ -120,7 +132,9 @@ class SyncogenDataManager:
             with open(lengths_path) as f:
                 payload = json.load(f)
             lengths = torch.tensor([int(k) for k in payload.keys()], dtype=torch.long)
-            probs = torch.tensor([float(v) for v in payload.values()], dtype=torch.float)
+            probs = torch.tensor(
+                [float(v) for v in payload.values()], dtype=torch.float
+            )
         else:
             # Only allow explicit compute if splits cache is present
             # (previous logic, not used unless called via data splits creation)
@@ -129,12 +143,16 @@ class SyncogenDataManager:
                     f"Length file {lengths_path} does not exist and cannot compute lengths without train split present."
                 )
             train_list = self._splits_cache["train"]
-            lengths_raw = [int(getattr(d, "num_nodes", d.x.shape[0])) for d in train_list]
+            lengths_raw = [
+                int(getattr(d, "num_nodes", d.x.shape[0])) for d in train_list
+            ]
             lengths_tensor = torch.as_tensor(lengths_raw, dtype=torch.long)
             values, counts = lengths_tensor.unique(return_counts=True)
             probs = counts.float() / counts.sum()
             lengths = values
-            payload = {int(l): float(p) for l, p in zip(lengths.tolist(), probs.tolist())}
+            payload = {
+                int(l): float(p) for l, p in zip(lengths.tolist(), probs.tolist())
+            }
             with open(lengths_path, "w") as f:
                 json.dump(payload, f)
         self.train_length_values = lengths
@@ -152,19 +170,27 @@ class SyncogenDataManager:
             )
         with open(lengths_path) as f:
             payload = json.load(f)
-        self.train_length_values = torch.tensor([int(k) for k in payload.keys()], dtype=torch.long)
-        self.train_length_probs = torch.tensor([float(v) for v in payload.values()], dtype=torch.float)
+        self.train_length_values = torch.tensor(
+            [int(k) for k in payload.keys()], dtype=torch.long
+        )
+        self.train_length_probs = torch.tensor(
+            [float(v) for v in payload.values()], dtype=torch.float
+        )
 
     def sample_n_nodes(self, batch_size: int) -> Optional[torch.Tensor]:
         # Ensure train length probabilities are loaded
         if self.train_length_probs is None or self.train_length_values is None:
             self.ensure_train_lengths_loaded()
-        idx = torch.multinomial(self.train_length_probs, num_samples=batch_size, replacement=True)
+        idx = torch.multinomial(
+            self.train_length_probs, num_samples=batch_size, replacement=True
+        )
         return self.train_length_values[idx]
 
     def _make_datasets(self) -> Tuple[Dataset, Dataset]:
         if self.conformers_path is None:
-            raise ValueError("conformers_path must be provided to build datasets and dataloaders.")
+            raise ValueError(
+                "conformers_path must be provided to build datasets and dataloaders."
+            )
         splits = self._splits_cache or self.get_graph_data_splits()
         train_ds = SyncogenDataset(
             conformers_path=str(self.conformers_path),
@@ -235,6 +261,7 @@ class SyncogenDataset(Dataset):
         self.conformers_path = conformers_path
         self.load_pharmacophores = load_pharmacophores
         self.load_bonds = load_bonds
+
     def len(self):
         return len(self.data_list)
 
@@ -248,7 +275,9 @@ class SyncogenDataset(Dataset):
 
         # Compute ground truth atom mask from graph to account for dropped atoms
         # Convert sparse graph to dense format (single graph, so batch size = 1)
-        batch = torch.zeros(data.x.shape[0], dtype=torch.long)  # All nodes in same batch
+        batch = torch.zeros(
+            data.x.shape[0], dtype=torch.long
+        )  # All nodes in same batch
         X_dense, E_dense, _, _ = to_dense_graph(
             x=data.x,
             edge_index=data.edge_index,
@@ -259,10 +288,15 @@ class SyncogenDataset(Dataset):
         # Remove batch dimension (single graph)
         X_dense = X_dense[0]
         E_dense = E_dense[0]
-        
+
         # Create graph and get ground truth atom mask
-        graph = BBRxnGraph.from_onehot(X_dense, E_dense)
-        atom_mask = graph.ground_truth_atom_mask.tensor.bool()  # Shape: [n_fragments * MAX_ATOMS_PER_BB], True = valid
+        # Single graph without padding - all nodes are valid
+        n_nodes = X_dense.shape[0]
+        node_mask = torch.ones(n_nodes, dtype=torch.bool, device=X_dense.device)
+        graph = BBRxnGraph.from_onehot(X_dense, E_dense, node_mask=node_mask)
+        atom_mask = (
+            graph.ground_truth_atom_mask.tensor.bool()
+        )  # Shape: [n_fragments * MAX_ATOMS_PER_BB], True = valid
         # Reshape to [n_fragments, MAX_ATOMS_PER_BB]
         n_fragments = X_dense.shape[0]
         atom_mask = atom_mask.reshape(n_fragments, MAX_ATOMS_PER_BB)
@@ -272,7 +306,7 @@ class SyncogenDataset(Dataset):
             Path(self.conformers_path),
             mask_value=self.coord_mask_value,
             return_bonds=self.load_bonds,
-            atom_mask=atom_mask
+            atom_mask=atom_mask,
         )
 
         if self.load_pharmacophores:
@@ -300,6 +334,7 @@ class SyncogenDataset(Dataset):
 ########################################################
 # Fault-tolerant dataloaders from: https://github.com/Dao-AILab/flash-attention/blob/main/training/src/datamodules/fault_tolerant_sampler.py
 ########################################################
+
 
 class RandomFaultTolerantSampler(torch.utils.data.RandomSampler):
     def __init__(self, *args, generator=None, **kwargs):
@@ -377,7 +412,9 @@ class FaultTolerantDistributedSampler(torch.utils.data.DistributedSampler):
             if padding_size <= len(indices):
                 indices += indices[:padding_size]
             else:
-                indices += (indices * math.ceil(padding_size / len(indices)))[:padding_size]
+                indices += (indices * math.ceil(padding_size / len(indices)))[
+                    :padding_size
+                ]
         else:
             # remove tail of data to make it evenly divisible.
             indices = indices[: self.total_size]

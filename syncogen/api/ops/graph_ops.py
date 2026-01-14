@@ -18,48 +18,30 @@ MASK_CHANNEL = -1  # Last channel indicates MASK token (for both reactions and B
 # ============ Edge Givens ============
 
 
-def apply_edge_givens(rxn_onehot: torch.Tensor, node_mask: torch.Tensor) -> torch.Tensor:
-    """Apply edge invariants: diagonals are NO-EDGE, padding is zeros.
-
-    This should be called after any operation that might violate these invariants
-    (noising, sampling steps, initialization).
+def apply_edge_givens(
+    rxn_onehot: torch.Tensor, node_mask: torch.Tensor
+) -> torch.Tensor:
+    """Apply edge invariants: diagonals are NO-EDGE.
 
     Args:
         rxn_onehot: (N, N, D) or (B, N, N, D) reaction one-hot tensor
-        node_mask: (N,) or (B, N) boolean/float mask where 1 = valid node
+        node_mask: (N,) or (B, N) boolean/float mask where 1 = valid node (unused, kept for API)
 
     Returns:
-        rxn_onehot with invariants applied (modified in-place and returned)
+        rxn_onehot with diagonals set to NO-EDGE (modified in-place and returned)
     """
     is_batched = rxn_onehot.dim() == 4
 
     if is_batched:
         B, N, _, D = rxn_onehot.shape
-
-        # 1. Diagonals -> NO-EDGE (for all samples)
         diag_idx = torch.arange(N, device=rxn_onehot.device)
         rxn_onehot[:, diag_idx, diag_idx, :] = 0
         rxn_onehot[:, diag_idx, diag_idx, NO_EDGE_CHANNEL] = 1
-
-        # 2. Padding -> zeros (where either node is invalid)
-        # edge_mask[b,i,j] = node_mask[b,i] AND node_mask[b,j]
-        node_mask_float = node_mask.float() if node_mask.dtype == torch.bool else node_mask
-        edge_valid = node_mask_float.unsqueeze(2) * node_mask_float.unsqueeze(1)  # (B, N, N)
-        padding_mask = (edge_valid == 0).unsqueeze(-1)  # (B, N, N, 1)
-        rxn_onehot = rxn_onehot.masked_fill(padding_mask, 0)
     else:
         N, _, D = rxn_onehot.shape
-
-        # 1. Diagonals -> NO-EDGE
         diag_idx = torch.arange(N, device=rxn_onehot.device)
         rxn_onehot[diag_idx, diag_idx, :] = 0
         rxn_onehot[diag_idx, diag_idx, NO_EDGE_CHANNEL] = 1
-
-        # 2. Padding -> zeros
-        node_mask_float = node_mask.float() if node_mask.dtype == torch.bool else node_mask
-        edge_valid = node_mask_float.unsqueeze(1) * node_mask_float.unsqueeze(0)  # (N, N)
-        padding_mask = (edge_valid == 0).unsqueeze(-1)  # (N, N, 1)
-        rxn_onehot = rxn_onehot.masked_fill(padding_mask, 0)
 
     return rxn_onehot
 
@@ -81,10 +63,9 @@ def create_masked_graph(
     """Create masked graph one-hots and a node mask for padding.
 
     Convention:
-    - Valid BBs: one-hot to MASK channel
-    - Valid edges (off-diagonal): one-hot to MASK channel
-    - Diagonals: one-hot to NO-EDGE channel (self-loops never exist)
-    - Padding (BB or edge): all zeros
+    - ALL BBs (valid and padding): one-hot to MASK channel
+    - ALL edges (valid, padding, and diagonals): one-hot to MASK channel
+      Diagonals get set to NO-EDGE after the first sampling step via apply_edge_givens.
 
     Args:
         max_nodes: Maximum number of nodes (padding length)
@@ -98,57 +79,58 @@ def create_masked_graph(
         device: Target device for tensors
 
     Returns:
-        bb_onehot: (N, D_bb) or (B, N, D_bb) with MASK tokens for valid nodes
-        rxn_onehot: (N, N, D_rxn) or (B, N, N, D_rxn) with MASK for valid edges, NO-EDGE for diagonals
-        node_mask: (N,) or (B, N) indicating valid nodes
+        bb_onehot: (N, D_bb) or (B, N, D_bb) with MASK tokens for ALL nodes
+        rxn_onehot: (N, N, D_rxn) or (B, N, N, D_rxn) with MASK for ALL edges (including padding)
+        node_mask: (N,) or (B, N) boolean mask indicating valid nodes
     """
     total_rxn_dim = vocab_num_rxns * vocab_num_centers * vocab_num_centers + rxn_pad
     bb_dim = vocab_num_bbs + bb_pad
 
     if batch_size is None:
-        # Single graph
         if n_nodes is not None:
             assert isinstance(n_nodes, int), "n_nodes must be int for single graph"
         n_valid = n_nodes if n_nodes else max_nodes
 
-        # Start with zeros (padding convention)
         bb = torch.zeros((max_nodes, bb_dim), dtype=torch.float32, device=device)
-        rxn = torch.zeros((max_nodes, max_nodes, total_rxn_dim), dtype=torch.float32, device=device)
-        node_mask = torch.zeros((max_nodes,), dtype=torch.float32, device=device)
+        bb[:, MASK_CHANNEL] = 1
 
+        rxn = torch.zeros(
+            (max_nodes, max_nodes, total_rxn_dim), dtype=torch.float32, device=device
+        )
+        rxn[:, :, MASK_CHANNEL] = 1
+
+        node_mask = torch.zeros((max_nodes,), dtype=torch.bool, device=device)
         if n_valid > 0:
-            node_mask[:n_valid] = 1.0
-            bb[:n_valid, MASK_CHANNEL] = 1  # Valid nodes -> MASK
-            rxn[:n_valid, :n_valid, MASK_CHANNEL] = 1  # Valid edges -> MASK (diagonals fixed below)
+            node_mask[:n_valid] = True
 
-        # Apply edge givens: diagonals -> NO-EDGE, padding -> zeros
-        rxn = apply_edge_givens(rxn, node_mask)
         return bb, rxn, node_mask
 
-    # Batched
-    bb = torch.zeros((batch_size, max_nodes, bb_dim), dtype=torch.float32, device=device)
-    rxn = torch.zeros(
-        (batch_size, max_nodes, max_nodes, total_rxn_dim), dtype=torch.float32, device=device
+    bb = torch.zeros(
+        (batch_size, max_nodes, bb_dim), dtype=torch.float32, device=device
     )
+    bb[:, :, MASK_CHANNEL] = 1
+
+    rxn = torch.zeros(
+        (batch_size, max_nodes, max_nodes, total_rxn_dim),
+        dtype=torch.float32,
+        device=device,
+    )
+    rxn[:, :, :, MASK_CHANNEL] = 1
 
     if n_nodes is None:
-        node_mask = torch.ones((batch_size, max_nodes), dtype=torch.float32, device=device)
-        bb[:, :, MASK_CHANNEL] = 1  # All nodes -> MASK
-        rxn[:, :, :, MASK_CHANNEL] = 1  # All edges -> MASK (diagonals fixed below)
+        node_mask = torch.ones((batch_size, max_nodes), dtype=torch.bool, device=device)
     else:
         lens = torch.as_tensor(n_nodes, dtype=torch.long)
         if lens.numel() != batch_size:
             raise ValueError("n_nodes must have length equal to batch_size")
-        node_mask = torch.zeros((batch_size, max_nodes), dtype=torch.float32, device=device)
+        node_mask = torch.zeros(
+            (batch_size, max_nodes), dtype=torch.bool, device=device
+        )
         for b in range(batch_size):
             n = int(lens[b].item())
             if n > 0:
-                node_mask[b, :n] = 1.0
-                bb[b, :n, MASK_CHANNEL] = 1
-                rxn[b, :n, :n, MASK_CHANNEL] = 1  # Valid edges -> MASK
+                node_mask[b, :n] = True
 
-    # Apply edge givens: diagonals -> NO-EDGE, padding -> zeros
-    rxn = apply_edge_givens(rxn, node_mask)
     return bb, rxn, node_mask
 
 
@@ -169,7 +151,9 @@ def bb_onehot_to_indices(bb_onehot: torch.Tensor) -> torch.Tensor:
     return bb_onehot.argmax(dim=2)
 
 
-def bb_indices_to_onehot(bb_indices: torch.Tensor, vocab_size: int, pad: int = 1) -> torch.Tensor:
+def bb_indices_to_onehot(
+    bb_indices: torch.Tensor, vocab_size: int, pad: int = 1
+) -> torch.Tensor:
     """Convert BB indices to one-hot.
 
     Args:
@@ -184,14 +168,17 @@ def bb_indices_to_onehot(bb_indices: torch.Tensor, vocab_size: int, pad: int = 1
 
     if bb_indices.dim() == 1:
         onehot = torch.zeros(
-            (bb_indices.shape[0], total_dim), dtype=torch.float32, device=bb_indices.device
+            (bb_indices.shape[0], total_dim),
+            dtype=torch.float32,
+            device=bb_indices.device,
         )
         onehot.scatter_(1, bb_indices.unsqueeze(1).long(), 1.0)
         return onehot
 
-    # Batched
     B, N = bb_indices.shape
-    onehot = torch.zeros((B, N, total_dim), dtype=torch.float32, device=bb_indices.device)
+    onehot = torch.zeros(
+        (B, N, total_dim), dtype=torch.float32, device=bb_indices.device
+    )
     onehot.scatter_(2, bb_indices.unsqueeze(2).long(), 1.0)
     return onehot
 
@@ -234,13 +221,16 @@ def rxn_indices_to_onehot(
 
     if rxn_indices.dim() == 2:
         N = rxn_indices.shape[0]
-        onehot = torch.zeros((N, N, total_dim), dtype=torch.float32, device=rxn_indices.device)
+        onehot = torch.zeros(
+            (N, N, total_dim), dtype=torch.float32, device=rxn_indices.device
+        )
         onehot.scatter_(2, rxn_indices.unsqueeze(2).long(), 1.0)
         return onehot
 
-    # Batched
     B, N, _ = rxn_indices.shape
-    onehot = torch.zeros((B, N, N, total_dim), dtype=torch.float32, device=rxn_indices.device)
+    onehot = torch.zeros(
+        (B, N, N, total_dim), dtype=torch.float32, device=rxn_indices.device
+    )
     onehot.scatter_(3, rxn_indices.unsqueeze(3).long(), 1.0)
     return onehot
 
@@ -262,11 +252,14 @@ def rxn_onehot_to_tuple(
         return _rxn_onehot_to_tuple_single(rxn_onehot, n_centers)
 
     return [
-        _rxn_onehot_to_tuple_single(rxn_onehot[b], n_centers) for b in range(rxn_onehot.shape[0])
+        _rxn_onehot_to_tuple_single(rxn_onehot[b], n_centers)
+        for b in range(rxn_onehot.shape[0])
     ]
 
 
-def _rxn_onehot_to_tuple_single(rxn_onehot: torch.Tensor, n_centers: int) -> torch.Tensor:
+def _rxn_onehot_to_tuple_single(
+    rxn_onehot: torch.Tensor, n_centers: int
+) -> torch.Tensor:
     """Convert single reaction one-hot to tuple format."""
     # Find non-zero entries excluding NO-EDGE and PAD channels
     nonzero = torch.nonzero(rxn_onehot[..., :-2])
@@ -312,19 +305,29 @@ def rxn_tuple_to_onehot(
     # Single graph case
     if isinstance(n_nodes, int) or (torch.is_tensor(n_nodes) and n_nodes.dim() == 0):
         n = int(n_nodes) if isinstance(n_nodes, int) else int(n_nodes.item())
-        return _rxn_tuple_to_onehot_single(rxn_tuple, n, vocab_num_rxns, vocab_num_centers, rxn_pad)
+        return _rxn_tuple_to_onehot_single(
+            rxn_tuple, n, vocab_num_rxns, vocab_num_centers, rxn_pad
+        )
 
     # Batched case
     lens = torch.as_tensor(n_nodes, dtype=torch.long)
     B = lens.numel()
 
     if not isinstance(rxn_tuple, list):
-        raise ValueError("For batched conversion, provide rxn_tuple as a list of per-graph tuples")
-    assert len(rxn_tuple) == B, f"rxn_tuple list length {len(rxn_tuple)} != batch size {B}"
+        raise ValueError(
+            "For batched conversion, provide rxn_tuple as a list of per-graph tuples"
+        )
+    assert (
+        len(rxn_tuple) == B
+    ), f"rxn_tuple list length {len(rxn_tuple)} != batch size {B}"
 
     outs = [
         _rxn_tuple_to_onehot_single(
-            rxn_tuple[b], int(lens[b].item()), vocab_num_rxns, vocab_num_centers, rxn_pad
+            rxn_tuple[b],
+            int(lens[b].item()),
+            vocab_num_rxns,
+            vocab_num_centers,
+            rxn_pad,
         )
         for b in range(B)
     ]
@@ -348,7 +351,9 @@ def _rxn_tuple_to_onehot_single(
 
     for rxn_data in rxn_tuple:
         reaction_idx, node1, node2, center1_idx, center2_idx = rxn_data.long()
-        flat_idx = reaction_idx * centers_sq + center1_idx * vocab_num_centers + center2_idx
+        flat_idx = (
+            reaction_idx * centers_sq + center1_idx * vocab_num_centers + center2_idx
+        )
         onehot[node1, node2, flat_idx] = 1
         onehot[node2, node1, flat_idx] = 1  # Symmetric
 
@@ -401,12 +406,11 @@ def compute_compatibility_masks(
     comp_bb = torch.ones((B, N, D_bb), dtype=torch.bool, device=bb.device)
     comp_rxn = torch.ones((B, N, N, D_rxn), dtype=torch.bool, device=rxn.device)
 
-    # Decode edge existence from NO-EDGE channel
-    # Must also check that edge is valid (not all zeros from padding)
-    rxn_idx = rxn.argmax(dim=-1)  # (B, N, N)
+    rxn_idx = rxn.argmax(dim=-1)
     no_edge_idx = D_rxn + no_edge_channel if no_edge_channel < 0 else no_edge_channel
-    is_valid_edge = rxn.any(dim=-1)  # Padding edges are all zeros
-    edge_exists = (rxn_idx < no_edge_idx) & is_valid_edge  # (B, N, N)
+    mask_idx = D_rxn - 1
+    is_not_masked = rxn[..., mask_idx] != 1
+    edge_exists = (rxn_idx < no_edge_idx) & is_not_masked
 
     # Compatibility codes per BB, reaction, and center
     comp_codes = compatibility.to(device=bb.device)  # (n_bbs, n_rxns, n_centers)
@@ -449,7 +453,7 @@ def compute_compatibility_masks(
                     comp_bb[b, j] = cand_j
 
     # ---- Edge compatibility mask (per-edge allowed reaction channels) ----
-    # Determine current BB indices per node
+    # Constrain based on BOTH endpoints (more restrictive than old code)
     bb_idx = bb.argmax(dim=-1)  # (B, N)
 
     for b in range(B):
@@ -458,11 +462,11 @@ def compute_compatibility_masks(
                 bb_i = int(bb_idx[b, i].item())
                 bb_j = int(bb_idx[b, j].item())
 
-                # If either endpoint is out-of-range (e.g., MASK token), leave this edge unconstrained
+                # If either endpoint is MASK token, leave this edge unconstrained
                 if bb_i < 0 or bb_i >= n_bbs or bb_j < 0 or bb_j >= n_bbs:
                     continue
 
-                # Build allowed mask across all reactions and center combinations at once
+                # Build allowed mask: require BOTH bb_i compatible as r1 AND bb_j compatible as r2
                 allowed_all = torch.zeros(core_dim, dtype=torch.bool, device=bb.device)
                 idx = 0
                 for r in range(n_rxns):
@@ -473,7 +477,7 @@ def compute_compatibility_masks(
                             idx += 1
 
                 candidate = comp_rxn[b, i, j, :core_dim] & allowed_all
-                # Only apply if more than one option remains, mirroring original guards
+                # Only apply if more than one option remains
                 if candidate.sum().item() > 1:
                     comp_rxn[b, i, j, :core_dim] = candidate
                     comp_rxn[b, j, i, :core_dim] = candidate  # symmetrize

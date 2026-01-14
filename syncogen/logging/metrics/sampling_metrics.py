@@ -89,7 +89,9 @@ class UniquenessMetrics(MetricsBase):
         if n_total == 0:
             return {}
 
-        valid_smiles = [Chem.MolToSmiles(m) for m in mols if m is not None and is_valid_smiles(m)]
+        valid_smiles = [
+            Chem.MolToSmiles(m) for m in mols if m is not None and is_valid_smiles(m)
+        ]
         n_valid = len(valid_smiles)
 
         if n_valid == 0:
@@ -120,7 +122,9 @@ class NoveltyMetrics(MetricsBase):
         if n_total == 0:
             return {}
 
-        valid_smiles = [Chem.MolToSmiles(m) for m in mols if m is not None and is_valid_smiles(m)]
+        valid_smiles = [
+            Chem.MolToSmiles(m) for m in mols if m is not None and is_valid_smiles(m)
+        ]
         n_valid = len(valid_smiles)
 
         if n_valid == 0:

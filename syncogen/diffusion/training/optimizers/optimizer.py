@@ -15,7 +15,9 @@ class Optimizer:
         self.optimizer: torch.optim.Optimizer = None
 
     def initialize(self, model: nn.Module):
-        self.optimizer = getattr(torch.optim, self.cls_name)(model.parameters(), **self.kwargs)
+        self.optimizer = getattr(torch.optim, self.cls_name)(
+            model.parameters(), **self.kwargs
+        )
 
     def step(self):
         self.optimizer.step()

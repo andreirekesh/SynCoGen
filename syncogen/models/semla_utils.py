@@ -164,7 +164,9 @@ def edges_from_nodes(coords, k=None, node_mask=None, edge_format="adjacency"):
 
     # If node mask is None all nodes are real
     if node_mask is None:
-        node_mask = torch.ones((batch_size, num_nodes), device=coords.device, dtype=torch.int64)
+        node_mask = torch.ones(
+            (batch_size, num_nodes), device=coords.device, dtype=torch.int64
+        )
 
     adj_matrix = adj_from_node_mask(node_mask)
 

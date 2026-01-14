@@ -32,7 +32,9 @@ def is_valid_smiles(smiles_or_mol):
         return False
 
 
-def build_molecule(nodes: torch.Tensor, decoded_edges: torch.Tensor, smiles: bool = False) -> str:
+def build_molecule(
+    nodes: torch.Tensor, decoded_edges: torch.Tensor, smiles: bool = False
+) -> str:
     """Build a molecule from model outputs. Used in calculating pvalid.
 
     Args:
@@ -95,7 +97,9 @@ def is_valid_action(mfg: RDKitMoleculeAssembly, action: list) -> bool:
     center2_idx = action[4]
 
     # Check if reaction center is still available on the existing fragment
-    if not mfg.fragment_graph.nodes[existing_frag_idx]["rxn_center_available"][center1_idx]:
+    if not mfg.fragment_graph.nodes[existing_frag_idx]["rxn_center_available"][
+        center1_idx
+    ]:
         return False
 
     # Resolve existing fragment's building block index
@@ -151,7 +155,9 @@ def build_molecules_from_graphs(
             if coords is not None:
                 try:
                     atom_coords = (
-                        coords[i].reshape(-1, 3) if graphs.is_batched else coords.reshape(-1, 3)
+                        coords[i].reshape(-1, 3)
+                        if graphs.is_batched
+                        else coords.reshape(-1, 3)
                     )
                     atom_mask = graph_i.ground_truth_atom_mask.tensor.reshape(-1).bool()
                     valid_coords = atom_coords[: atom_mask.shape[0], :][atom_mask]
@@ -282,7 +288,9 @@ def mol_to_pharm_cond(
 
     if center:
         conf = mol.GetConformer()
-        coords = np.array([list(conf.GetAtomPosition(i)) for i in range(mol.GetNumAtoms())])
+        coords = np.array(
+            [list(conf.GetAtomPosition(i)) for i in range(mol.GetNumAtoms())]
+        )
         centroid = coords.mean(axis=0)
         for i, pos in enumerate(coords):
             conf.SetAtomPosition(i, Point3D(*(pos - centroid)))
@@ -331,7 +339,9 @@ def set_mol_coordinates(mol: Chem.Mol, coords: torch.Tensor) -> Chem.Mol:
     """
     conf = Chem.Conformer(mol.GetNumAtoms())
     for i, coord in enumerate(coords):
-        conf.SetAtomPosition(i, Point3D(float(coord[0]), float(coord[1]), float(coord[2])))
+        conf.SetAtomPosition(
+            i, Point3D(float(coord[0]), float(coord[1]), float(coord[2]))
+        )
     mol.RemoveAllConformers()
     mol.AddConformer(conf, assignId=True)
     return mol

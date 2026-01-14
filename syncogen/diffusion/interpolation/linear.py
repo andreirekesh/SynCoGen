@@ -12,7 +12,9 @@ class LinearInterpolator(InterpolatorBase):
     Implements simple linear interpolation: φ_t(C0, C1) = (1-t) * C0 + t * C1
     """
 
-    def interpolate(self, C0: torch.Tensor, C1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def interpolate(
+        self, C0: torch.Tensor, C1: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
         """Linearly interpolate between C0 and C1.
 
         Args:

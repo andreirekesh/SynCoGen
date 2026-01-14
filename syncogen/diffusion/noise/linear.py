@@ -9,7 +9,9 @@ from syncogen.diffusion.noise.base import NoiseBase
 class LinearNoise(NoiseBase):
     """Linear noise schedule."""
 
-    def __init__(self, sigma_min: float = 0, sigma_max: float = 10, dtype=torch.float32):
+    def __init__(
+        self, sigma_min: float = 0, sigma_max: float = 10, dtype=torch.float32
+    ):
         super().__init__()
         self.sigma_min = torch.tensor(sigma_min, dtype=dtype)
         self.sigma_max = torch.tensor(sigma_max, dtype=dtype)

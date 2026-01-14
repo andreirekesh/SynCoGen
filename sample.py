@@ -31,23 +31,39 @@ from syncogen.constants.constants import load_vocabulary
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Sample from SynCoGen diffusion model")
-    parser.add_argument("--config", type=str, required=True, help="Path to gin config file")
-    parser.add_argument("--vocab_dir", type=str, required=True, help="Path to vocabulary directory")
+    parser.add_argument(
+        "--config", type=str, required=True, help="Path to gin config file"
+    )
+    parser.add_argument(
+        "--vocab_dir", type=str, required=True, help="Path to vocabulary directory"
+    )
     parser.add_argument(
         "--checkpoint_path", type=str, required=True, help="Path to model checkpoint"
     )
     parser.add_argument(
-        "--output_dir", type=str, required=True, help="Directory to save sampled molecules"
+        "--output_dir",
+        type=str,
+        required=True,
+        help="Directory to save sampled molecules",
     )
     parser.add_argument(
-        "--reference_ligand", type=str, default=None, help="Reference ligand SDF for conditioning"
+        "--reference_ligand",
+        type=str,
+        default=None,
+        help="Reference ligand SDF for conditioning",
     )
-    parser.add_argument("--num_batches", type=int, default=10, help="Number of batches to sample")
-    parser.add_argument("--num_steps", type=int, default=100, help="Number of diffusion steps")
+    parser.add_argument(
+        "--num_batches", type=int, default=10, help="Number of batches to sample"
+    )
+    parser.add_argument(
+        "--num_steps", type=int, default=100, help="Number of diffusion steps"
+    )
     parser.add_argument(
         "--batch_size", type=int, default=None, help="Override batch size from config"
     )
-    parser.add_argument("--sort_by", type=str, choices=["energy", "similarity"], default=None)
+    parser.add_argument(
+        "--sort_by", type=str, choices=["energy", "similarity"], default=None
+    )
     parser.add_argument(
         "--metadata_file", type=str, default=None, help="Path to save metadata JSON"
     )
@@ -72,7 +88,12 @@ load_vocabulary(args.vocab_dir)
 
 from syncogen.diffusion.training.diffusion import Diffusion
 from syncogen.data.dataloader import SyncogenDataManager
-from syncogen.utils.rdkit import calc_energy, save_as_sdf, mol_to_pharm_cond, set_mol_coordinates
+from syncogen.utils.rdkit import (
+    calc_energy,
+    save_as_sdf,
+    mol_to_pharm_cond,
+    set_mol_coordinates,
+)
 import syncogen.logging.loggers
 import syncogen.logging.callbacks
 from syncogen.diffusion.training.trainer import Trainer
@@ -157,7 +178,9 @@ def sample(
 
             # Only check unmasked status for valid nodes (not padding)
             n = int(graph_i.lengths.item())
-            if not (graph_i.unmasked_bbs[:n].all() and graph_i.unmasked_rxns[:n, :n].all()):
+            if not (
+                graph_i.unmasked_bbs[:n].all() and graph_i.unmasked_rxns[:n, :n].all()
+            ):
                 continue
 
             try:
@@ -195,12 +218,15 @@ def sample(
                 }
             )
 
-        print(f"Batch {batch_idx + 1}/{num_batches}: {total_valid}/{total_sampled} valid")
+        print(
+            f"Batch {batch_idx + 1}/{num_batches}: {total_valid}/{total_sampled} valid"
+        )
 
     # Sort
     if sort_by == "energy":
         results = sorted(
-            results, key=lambda x: x["energy"] if x["energy"] is not None else float("inf")
+            results,
+            key=lambda x: x["energy"] if x["energy"] is not None else float("inf"),
         )
     elif sort_by == "similarity" and ref_mol is not None:
         results = sorted(results, key=lambda x: -(x["similarity"] or 0))
@@ -222,7 +248,9 @@ def sample(
         "molecules": [{k: v for k, v in r.items() if k != "mol"} for r in results],
     }
 
-    metadata_path = Path(metadata_file) if metadata_file else output_path / "metadata.json"
+    metadata_path = (
+        Path(metadata_file) if metadata_file else output_path / "metadata.json"
+    )
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2)
 

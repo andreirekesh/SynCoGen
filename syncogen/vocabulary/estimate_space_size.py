@@ -78,7 +78,9 @@ def estimate_state_space(dir_path: str, ks: list[int]):
     print(f"[INFO] Loaded compat tensor from {compat_path}: shape={compat.shape}")
 
     if n_bbs2 != n_bbs:
-        raise ValueError(f"BB count mismatch: vocab has {n_bbs}, compat has {n_bbs2} in dim 0")
+        raise ValueError(
+            f"BB count mismatch: vocab has {n_bbs}, compat has {n_bbs2} in dim 0"
+        )
     if n_rxns2 != n_rxns:
         raise ValueError(
             f"Reaction count mismatch: reactions.json has {n_rxns}, compat has {n_rxns2} in dim 1"
@@ -99,7 +101,9 @@ def estimate_state_space(dir_path: str, ks: list[int]):
         else:
             est_str = f"{est:.3e}"
 
-        print(f"  k = {k:2d} BBs:  ~ {est_str}  " f"(log10 |S_{k}-BB| ≈ {log10_est:.2f})")
+        print(
+            f"  k = {k:2d} BBs:  ~ {est_str}  " f"(log10 |S_{k}-BB| ≈ {log10_est:.2f})"
+        )
 
         # accumulate log10 total safely
         if total_log10 is None:
@@ -107,10 +111,15 @@ def estimate_state_space(dir_path: str, ks: list[int]):
         else:
             # log-sum-exp in base 10: log10(a + b) = m + log10(10^(x-m) + 10^(y-m))
             m = max(total_log10, log10_est)
-            total_log10 = m + math.log10(10 ** (total_log10 - m) + 10 ** (log10_est - m))
+            total_log10 = m + math.log10(
+                10 ** (total_log10 - m) + 10 ** (log10_est - m)
+            )
 
     if total_log10 is not None:
-        print(f"\n[RESULTS] Total |S| over k={ks}:  " f"log10 |S_total| ≈ {total_log10:.2f}")
+        print(
+            f"\n[RESULTS] Total |S| over k={ks}:  "
+            f"log10 |S_total| ≈ {total_log10:.2f}"
+        )
 
 
 if __name__ == "__main__":

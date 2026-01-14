@@ -127,8 +127,12 @@ class RDKitMoleculeAssembly:
         """
         smiles = BUILDING_BLOCKS_IDX_TO_SMI[new_frag_global_id]["smiles"]
         new_frag_order = self.num_fragments()
-        new_fragment_instance = FragmentInstance(smiles, new_frag_order, new_frag_global_id)
-        new_rxn_center_available = [True] * len(BUILDING_BLOCKS_SMI_TO_IDX[smiles]["centers"])
+        new_fragment_instance = FragmentInstance(
+            smiles, new_frag_order, new_frag_global_id
+        )
+        new_rxn_center_available = [True] * len(
+            BUILDING_BLOCKS_SMI_TO_IDX[smiles]["centers"]
+        )
 
         # If this is the first fragment, we're done
         if self.num_fragments() == 0:

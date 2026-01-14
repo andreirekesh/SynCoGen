@@ -110,7 +110,9 @@ class CoordNorm(torch.nn.Module):
 
 
 class EdgeMessages(torch.nn.Module):
-    def __init__(self, d_model, d_message, d_out, n_coord_sets, d_ff=None, d_edge=None, eps=1e-6):
+    def __init__(
+        self, d_model, d_message, d_out, n_coord_sets, d_ff=None, d_edge=None, eps=1e-6
+    ):
         super().__init__()
 
         edge_feats = 0 if d_edge is None else d_edge
@@ -164,12 +166,18 @@ class EdgeMessages(torch.nn.Module):
 
         coords = self.coord_norm(coords, node_mask, atom_only_mask).flatten(0, 1)
         coord_dotprods = torch.bmm(coords, coords.transpose(1, 2))
-        coord_feats = coord_dotprods.unflatten(0, (-1, self.n_coord_sets)).movedim(1, -1)
+        coord_feats = coord_dotprods.unflatten(0, (-1, self.n_coord_sets)).movedim(
+            1, -1
+        )
 
         # Project to smaller dimension and create pairwise node features
         node_feats = self.node_proj(node_feats)
-        node_feats_start = node_feats.unsqueeze(2).expand(batch_size, n_nodes, n_nodes, -1)
-        node_feats_end = node_feats.unsqueeze(1).expand(batch_size, n_nodes, n_nodes, -1)
+        node_feats_start = node_feats.unsqueeze(2).expand(
+            batch_size, n_nodes, n_nodes, -1
+        )
+        node_feats_end = node_feats.unsqueeze(1).expand(
+            batch_size, n_nodes, n_nodes, -1
+        )
         node_pairs = torch.cat((node_feats_start, node_feats_end), dim=-1)
 
         in_edge_feats = torch.cat((node_pairs, coord_feats), dim=3)
@@ -188,7 +196,9 @@ class NodeAttention(torch.nn.Module):
         d_head = d_model // n_attn_heads
 
         if d_attn % n_attn_heads != 0:
-            raise ValueError("n_attn_heads must divide d_model (or d_attn if provided) exactly.")
+            raise ValueError(
+                "n_attn_heads must divide d_model (or d_attn if provided) exactly."
+            )
 
         self.d_model = d_model
         self.d_attn = d_attn
@@ -357,14 +367,18 @@ class EquivariantMLP(torch.nn.Module):
 
 
 class NodeFeedForward(torch.nn.Module):
-    def __init__(self, d_model, n_coord_sets, d_ff=None, proj_sets=None, coord_norm="length"):
+    def __init__(
+        self, d_model, n_coord_sets, d_ff=None, proj_sets=None, coord_norm="length"
+    ):
         super().__init__()
 
         self.node_norm = torch.nn.LayerNorm(d_model)
         self.coord_norm = CoordNorm(n_coord_sets, norm=coord_norm)
 
         self.invariant_mlp = LengthsMLP(d_model, n_coord_sets, d_ff=d_ff)
-        self.equivariant_mlp = EquivariantMLP(d_model, n_coord_sets, proj_sets=proj_sets)
+        self.equivariant_mlp = EquivariantMLP(
+            d_model, n_coord_sets, proj_sets=proj_sets
+        )
 
     def forward(self, coord_sets, node_feats, node_mask, atom_only_mask):
         """Pass data through the layer
@@ -482,7 +496,9 @@ class EquiMessagePassingLayer(torch.nn.Module):
         d_ff = d_model * 4
         d_attn = d_model
         d_message_out = n_attn_heads + self.d_coord_message
-        d_message_out = d_message_out + d_edge_out if d_edge_out is not None else d_message_out
+        d_message_out = (
+            d_message_out + d_edge_out if d_edge_out is not None else d_message_out
+        )
 
         self.node_ff = NodeFeedForward(
             d_model,
@@ -515,7 +531,9 @@ class EquiMessagePassingLayer(torch.nn.Module):
             "d_message_hidden": self.d_message_hidden,
         }
 
-    def forward(self, coords, node_feats, adj_matrix, node_mask, atom_only_mask, edge_feats=None):
+    def forward(
+        self, coords, node_feats, adj_matrix, node_mask, atom_only_mask, edge_feats=None
+    ):
         """Pass data through the layer
 
         Args:
@@ -541,7 +559,9 @@ class EquiMessagePassingLayer(torch.nn.Module):
                 "The model was initialised with d_edge_in but no edge feats were provided to forward."
             )
 
-        coord_updates, node_updates = self.node_ff(coords, node_feats, node_mask, atom_only_mask)
+        coord_updates, node_updates = self.node_ff(
+            coords, node_feats, node_mask, atom_only_mask
+        )
         coords = coords + coord_updates  # * atom_only_mask.unsqueeze(-1)
         node_feats = node_feats + node_updates
         ### ADD
@@ -655,7 +675,9 @@ class EquiInvDynamics(torch.nn.Module):
 
         self.layers = torch.nn.ModuleList(layers)
 
-        self.final_ff_block = NodeFeedForward(d_model, n_coord_sets, coord_norm=coord_norm)
+        self.final_ff_block = NodeFeedForward(
+            d_model, n_coord_sets, coord_norm=coord_norm
+        )
         self.coord_norm = CoordNorm(n_coord_sets, norm=coord_norm)
         # self.feat_norm = torch.nn.LayerNorm(d_model)
 
@@ -724,18 +746,27 @@ class EquiInvDynamics(torch.nn.Module):
 
         # Project single coord set into a multiple learnable coord sets, while maintaining equivariance
         coords = (
-            torch.stack((coords, cond_coords)) if cond_coords is not None else coords.unsqueeze(0)
+            torch.stack((coords, cond_coords))
+            if cond_coords is not None
+            else coords.unsqueeze(0)
         )
         coords = self.coord_proj(coords.movedim(0, -1)).movedim(-1, 1)
 
         atom_mask = atom_mask.unsqueeze(1).expand(-1, self.n_coord_sets, -1)
-        atom_and_pharm_mask = atom_and_pharm_mask.unsqueeze(1).expand(-1, self.n_coord_sets, -1)
+        atom_and_pharm_mask = atom_and_pharm_mask.unsqueeze(1).expand(
+            -1, self.n_coord_sets, -1
+        )
         coords = coords * atom_and_pharm_mask.unsqueeze(-1)
 
         # Update coords and node feats using the model layers
         for layer in self.layers:
             out = layer(
-                coords, inv_feats, adj_matrix, atom_and_pharm_mask, atom_mask, edge_feats=edge_feats
+                coords,
+                inv_feats,
+                adj_matrix,
+                atom_and_pharm_mask,
+                atom_mask,
+                edge_feats=edge_feats,
             )
             if len(out) == 2:
                 coords, inv_feats = out
@@ -744,7 +775,9 @@ class EquiInvDynamics(torch.nn.Module):
                 coords, inv_feats, edge_feats = out
 
         # Apply a final feedforward block (also masked) and project coord sets to single coord set  ### CHANGED
-        coords, inv_feats = self.final_ff_block(coords, inv_feats, atom_and_pharm_mask, atom_mask)
+        coords, inv_feats = self.final_ff_block(
+            coords, inv_feats, atom_and_pharm_mask, atom_mask
+        )
 
         out_coords = self.coord_norm(coords, atom_and_pharm_mask, atom_mask)
         out_coords = self.coord_head(out_coords.transpose(1, -1))
@@ -916,6 +949,7 @@ class SemlaPharmGenerator(nn.Module):
         E,
         C,
         atom_mask,
+        node_mask,
         pharm_types=None,  ### CHANGED
         pharm_pos=None,  ### CHANGED
         pharm_padding_mask=None,  ### CHANGED
@@ -923,19 +957,20 @@ class SemlaPharmGenerator(nn.Module):
         """Forward pass of the model.
 
         Args:
-            X (torch.Tensor): Atom features tensor, shape [batch_size, n_atoms, n_atom_features]
-            E (torch.Tensor): Edge features tensor, shape [batch_size, n_atoms, n_atoms, n_edge_features]
-            C (torch.Tensor): Coordinates tensor, shape [batch_size, n_atoms, 3]
-            atom_mask (torch.Tensor): Atom mask tensor, shape [batch_size, n_atoms]
+            X (torch.Tensor): Atom features tensor, shape [batch_size, n_fragments, n_atom_features]
+            E (torch.Tensor): Edge features tensor, shape [batch_size, n_fragments, n_fragments, n_edge_features]
+            C (torch.Tensor): Coordinates tensor, shape [batch_size, n_fragments * MAX_ATOMS_PER_BB, 3]
+            atom_mask (torch.Tensor): Atom mask tensor, shape [batch_size, n_fragments * MAX_ATOMS_PER_BB]
+            node_mask (torch.Tensor): Fragment mask tensor, shape [batch_size, n_fragments]
             pharm_types (torch.Tensor, Optional): Pharmacophore features, shape [batch_size, n_pharm, d_feat]  ### CHANGED
             pharm_pos (torch.Tensor, Optional): Pharmacophore coordinates, shape [batch_size, n_pharm, 3]  ### CHANGED
             pharm_padding_mask (torch.Tensor, Optional): Pharmacophore mask, shape [batch_size, n_pharm]  ### CHANGED
 
         Returns:
             tuple: Contains:
-                - pred_coords (torch.Tensor): Predicted coordinates, shape [batch_size, n_atoms, 3]
-                - node_logits (torch.Tensor): Predicted node type logits, shape [batch_size, n_atoms, n_node_types]
-                - edge_logits (torch.Tensor): Predicted edge type logits, shape [batch_size, n_atoms, n_atoms, n_edge_types]
+                - node_logits (torch.Tensor): Predicted node type logits, shape [batch_size, n_fragments, n_node_types]
+                - edge_logits (torch.Tensor): Predicted edge type logits, shape [batch_size, n_fragments, n_fragments, n_edge_types]
+                - pred_coords (torch.Tensor): Predicted coordinates, shape [batch_size, n_fragments * MAX_ATOMS_PER_BB, 3]
         """
         bs, n = X.shape[0], X.shape[1]
         pharm_types = pharm_types.to(X.dtype)
@@ -966,15 +1001,9 @@ class SemlaPharmGenerator(nn.Module):
         else:
             cond_atomics, cond_bonds, cond_coords = None, None, None
 
-        # treat padding as masked nodes in the backbone
-        X_all_zeros = (X == 0).all(dim=-1)  # shape: (bs, n)
-        frag_mask = ~X_all_zeros
+        # node_mask is the fragment-level mask (passed directly, no inference needed)
+        frag_mask = node_mask.bool()
         n_fragments = frag_mask.sum(dim=-1)
-        if X_all_zeros.any():
-            last_feat_idx = X.shape[-1] - 1
-            # Find the indices where X_all_zeros is True
-            idx = X_all_zeros.nonzero(as_tuple=True)  # (batch_idx, node_idx)
-            X[idx[0], idx[1], last_feat_idx] = 1.0
 
         X_indices = X.argmax(dim=-1)
 
@@ -983,7 +1012,9 @@ class SemlaPharmGenerator(nn.Module):
         # concatenate pharmacophores as extra nodes if provided  ### CHANGED
         C = torch.cat([C, pharm_pos], dim=1)
         cond_coords = torch.cat([cond_coords, pharm_pos], dim=1)
-        update_mask = torch.cat([atom_mask, torch.zeros_like(pharm_padding_mask)], dim=1)
+        update_mask = torch.cat(
+            [atom_mask, torch.zeros_like(pharm_padding_mask)], dim=1
+        )
         atom_mask = torch.cat([atom_mask, pharm_padding_mask], dim=1)
 
         edge_feats = torch.zeros(
@@ -997,14 +1028,21 @@ class SemlaPharmGenerator(nn.Module):
             if not (has_masked_nodes or has_masked_edges):
                 # No masks - try to compute exact bonds from graph structure
                 try:
-                    graph = BBRxnGraph.from_onehot(X[i], E[i])
-                    edge_feats[i] = graph.calculate_bonds(reindex=False, as_onehot_adj_tensor=True)
+                    # Use frag_mask[i] as node_mask for this single sample
+                    graph = BBRxnGraph.from_onehot(X[i], E[i], node_mask=frag_mask[i])
+                    edge_feats[i] = graph.calculate_bonds(
+                        reindex=False, as_onehot_adj_tensor=True
+                    )
                 except Exception:
                     # Fall back to partial bond features if calculation fails
-                    edge_feats[i] = get_partial_bond_features(X_indices[i : i + 1], mode="feats")[0]
+                    edge_feats[i] = get_partial_bond_features(
+                        X_indices[i : i + 1], mode="feats"
+                    )[0]
             else:
                 # Has masks - use partial bond features
-                edge_feats[i] = get_partial_bond_features(X_indices[i : i + 1], mode="feats")[0]
+                edge_feats[i] = get_partial_bond_features(
+                    X_indices[i : i + 1], mode="feats"
+                )[0]
 
         adj_matrix = edges_from_nodes(C, k=None, node_mask=atom_mask).to(torch.int8)
 
@@ -1015,7 +1053,8 @@ class SemlaPharmGenerator(nn.Module):
         inv_feats = inv_feats.reshape(bs, n * MAX_ATOMS_PER_BB, -1)
 
         pharm_types_padded = torch.zeros(
-            (pharm_types.shape[0], pharm_types.shape[1], N_ATOM_FEATURES), device=inv_feats.device
+            (pharm_types.shape[0], pharm_types.shape[1], N_ATOM_FEATURES),
+            device=inv_feats.device,
         )
         pharm_types_padded[:, :, : pharm_types.shape[-1]] = pharm_types
         inv_feats = torch.cat([inv_feats, pharm_types_padded], dim=1)
@@ -1033,7 +1072,9 @@ class SemlaPharmGenerator(nn.Module):
         pharm_positions = frag_and_pharm_positions[-1:]
 
         # Generate embeddings
-        atom_pos_emb = self.pos_emb(atom_positions)  # n*MAX_ATOMS_PER_BB + N_PHARM, pos_emb
+        atom_pos_emb = self.pos_emb(
+            atom_positions
+        )  # n*MAX_ATOMS_PER_BB + N_PHARM, pos_emb
         frag_pos_emb = self.pos_emb(frag_positions)  # n, pos_emb
         pharm_pos_emb = self.pos_emb(pharm_positions)
 
@@ -1041,7 +1082,9 @@ class SemlaPharmGenerator(nn.Module):
         frag_pos_emb = frag_pos_emb.unsqueeze(1).expand(
             -1, MAX_ATOMS_PER_BB, -1
         )  # n, MAX_ATOMS_PER_BB, pos_emb
-        frag_pos_emb = frag_pos_emb.reshape(n * MAX_ATOMS_PER_BB, -1)  # n*MAX_ATOMS_PER_BB, pos_emb
+        frag_pos_emb = frag_pos_emb.reshape(
+            n * MAX_ATOMS_PER_BB, -1
+        )  # n*MAX_ATOMS_PER_BB, pos_emb
         pharm_pos_emb = pharm_pos_emb.expand(
             self.pharmacophore_subset, pharm_pos_emb.shape[1]
         )  # pharmacophore_subset, pos_emb
@@ -1081,7 +1124,9 @@ class SemlaPharmGenerator(nn.Module):
                 device=edge_feats.device,
             )
             edge_feats_pharm[:, :, :, -1] = 1
-            edge_feats_pharm[:, : edge_feats.shape[1], : edge_feats.shape[2], :] = edge_feats
+            edge_feats_pharm[:, : edge_feats.shape[1], : edge_feats.shape[2], :] = (
+                edge_feats
+            )
             edge_feats = self.edge_in_proj(edge_feats_pharm)
 
         out = self.dynamics(

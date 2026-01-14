@@ -6,13 +6,13 @@
   "n_atom_features": 11,
   "n_bond_features": 5,
   "atom_types": [
+    "B",
+    "Br",
     "C",
+    "Cl",
+    "F",
     "N",
     "O",
-    "B",
-    "F",
-    "Cl",
-    "Br",
     "S"
   ],
   "max_centers_per_bb": 3

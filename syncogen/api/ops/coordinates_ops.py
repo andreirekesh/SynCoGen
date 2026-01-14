@@ -8,20 +8,35 @@ def _ensure_time_dim(t: torch.Tensor, target_dim: int) -> torch.Tensor:
 
 
 def center(
-    coords: torch.Tensor, mask: torch.Tensor, custom_center: torch.Tensor = None
+    coords: torch.Tensor,
+    mask: torch.Tensor,
+    custom_center: torch.Tensor = None,
+    apply_mask: torch.Tensor = None,
 ) -> torch.Tensor:
-    """Center coordinates by mask; supports [N,3] or [B,N,3]."""
+    """Center coordinates by mask; supports [N,3], [B,N,3], or [B,S,N,3].
+
+    Args:
+        coords: Coordinates tensor [N,3], [B,N,3], or [B,S,N,3]
+        mask: Mask for computing center
+        custom_center: Optional pre-computed center to subtract
+        apply_mask: Optional separate mask for zeroing after centering.
+                    If None, NO zeroing is applied (matches old behavior).
+    """
     if custom_center is not None:
-        if coords.dim() == 2:
-            return coords - custom_center
-        return coords - custom_center
-    if coords.dim() == 2:
-        c = (coords * mask.unsqueeze(-1)).sum(dim=0) / (mask.sum() + 1e-8)
-        return coords - c
-    c = (coords * mask.unsqueeze(-1)).sum(dim=1, keepdim=True) / (
-        mask.sum(dim=1, keepdim=True).unsqueeze(-1) + 1e-8
+        centered = coords - custom_center
+        if apply_mask is not None:
+            return centered * apply_mask.unsqueeze(-1)
+        return centered
+
+    # Use dim=-2 to always sum over the nodes dimension (second to last)
+    # This works for [N,3], [B,N,3], and [B,S,N,3]
+    c = (coords * mask.unsqueeze(-1)).sum(dim=-2, keepdim=True) / (
+        mask.sum(dim=-1, keepdim=True).unsqueeze(-1) + 1e-8
     )
-    return coords - c
+    centered = coords - c
+    if apply_mask is not None:
+        return centered * apply_mask.unsqueeze(-1)
+    return centered
 
 
 @torch.amp.autocast(device_type="cuda", enabled=False)
@@ -31,7 +46,9 @@ def random_rotate(coords: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     coords = coords.to(torch.float32)
 
     if coords.dim() == 2:
-        q, r = torch.linalg.qr(torch.randn(3, 3, device=coords.device, dtype=torch.float32))
+        q, r = torch.linalg.qr(
+            torch.randn(3, 3, device=coords.device, dtype=torch.float32)
+        )
         R = q @ torch.diag(torch.sign(torch.diag(r)))
         if torch.det(R) < 0:
             R[:, -1] *= -1
@@ -40,7 +57,9 @@ def random_rotate(coords: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     b = coords.shape[0]
     R_list = []
     for _ in range(b):
-        q, r = torch.linalg.qr(torch.randn(3, 3, device=coords.device, dtype=torch.float32))
+        q, r = torch.linalg.qr(
+            torch.randn(3, 3, device=coords.device, dtype=torch.float32)
+        )
         R = q @ torch.diag(torch.sign(torch.diag(r)))
         if torch.det(R) < 0:
             R[:, -1] *= -1
@@ -50,7 +69,9 @@ def random_rotate(coords: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return (out * mask.unsqueeze(-1)).to(orig_dtype)
 
 
-def random_translate(coords: torch.Tensor, mask: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
+def random_translate(
+    coords: torch.Tensor, mask: torch.Tensor, scale: float = 1.0
+) -> torch.Tensor:
     """Apply random translation(s) to coords, preserving masked-out positions."""
     if coords.dim() == 2:
         t = torch.randn(1, 3, device=coords.device) * scale
@@ -107,7 +128,11 @@ def kabsch_align(
     # 4. Rotation + reflection correction
     R = torch.einsum("bij,bjk->bik", V, U.mH)
     detR = torch.det(R)
-    F = torch.eye(3, dtype=torch.float32, device=cov.device).unsqueeze(0).repeat(cov.shape[0], 1, 1)
+    F = (
+        torch.eye(3, dtype=torch.float32, device=cov.device)
+        .unsqueeze(0)
+        .repeat(cov.shape[0], 1, 1)
+    )
     F[:, -1, -1] = torch.where(detR < 0, -1.0, 1.0)
     R = torch.einsum("bij,bjk,bkl->bil", V, F, U.mH)
 

@@ -6,7 +6,10 @@ import gin
 from syncogen.api.graph.graph import BBRxnGraph
 from syncogen.api.ops.graph_ops import bb_indices_to_onehot, rxn_indices_to_onehot
 from syncogen.diffusion.sampling.discrete_strategies.base import DiscreteStrategyBase
-from syncogen.diffusion.sampling.discrete_strategies.utils import sample_categorical, sample_edges
+from syncogen.diffusion.sampling.discrete_strategies.utils import (
+    sample_categorical,
+    sample_edges,
+)
 
 
 @gin.configurable
@@ -81,14 +84,16 @@ class MDLM(DiscreteStrategyBase):
         q_es[..., -1] = move_chance_s_E[..., 0]
         _E_indices, _ = sample_categorical(q_es)
 
-        # Symmetrize edges (diagonals handled by apply_edge_givens in sampling loop)
+        # Symmetrize edges and set diagonals to NO-EDGE index
         _E_upper = torch.triu(_E_indices, diagonal=1)
         _E_indices = _E_upper + _E_upper.transpose(1, 2)
+        diag_indices = torch.arange(_E_indices.shape[1], device=_E_indices.device)
+        _E_indices[:, diag_indices, diag_indices] = edge_mask_idx - 1  # NO-EDGE index
 
         # Convert to one-hot
-        _X = bb_indices_to_onehot(_X_indices, vocab_size=BBRxnGraph.VOCAB_NUM_BBS, pad=1).to(
-            X.dtype
-        )
+        _X = bb_indices_to_onehot(
+            _X_indices, vocab_size=BBRxnGraph.VOCAB_NUM_BBS, pad=1
+        ).to(X.dtype)
         _E = rxn_indices_to_onehot(
             _E_indices,
             vocab_num_rxns=BBRxnGraph.VOCAB_NUM_RXNS,
