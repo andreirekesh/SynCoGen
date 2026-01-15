@@ -295,7 +295,7 @@ class SyncogenDataset(Dataset):
         node_mask = torch.ones(n_nodes, dtype=torch.bool, device=X_dense.device)
         graph = BBRxnGraph.from_onehot(X_dense, E_dense, node_mask=node_mask)
         atom_mask = (
-            graph.ground_truth_atom_mask.tensor.bool()
+            graph.ground_truth_atom_mask.bool()
         )  # Shape: [n_fragments * MAX_ATOMS_PER_BB], True = valid
         # Reshape to [n_fragments, MAX_ATOMS_PER_BB]
         n_fragments = X_dense.shape[0]

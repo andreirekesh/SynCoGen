@@ -28,11 +28,6 @@ def to_dense_graph(
     edge_padding_mask = node_padding_mask.unsqueeze(-1) & node_padding_mask.unsqueeze(
         -2
     )
-
-    # Convert padding nodes from zeros to MASK tokens for consistency with sampling.
-    padding_nodes = ~node_padding_mask  # (B, N) - True where padding
-    nodes_onehot[padding_nodes, -1] = 1.0  # Set MASK bit for padding nodes
-
     # Make E symmetric by copying the upper triangle to the lower triangle (for first channel)
     edges_onehot[:, :, :, 0] = torch.triu(edges_onehot[:, :, :, 0]) + torch.triu(
         edges_onehot[:, :, :, 0], 1

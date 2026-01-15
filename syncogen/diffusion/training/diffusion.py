@@ -184,7 +184,7 @@ class Diffusion(L.LightningModule):
 
     def _apply_scale_noise(self, coords: Coordinates) -> Coordinates:
         """Scale coordinates by log(num_atoms) * scale_noise_factor."""
-        atom_mask = coords.atom_mask.tensor
+        atom_mask = coords.atom_mask
         coords_tensor = coords.atom_coords
         mask_flat = (
             atom_mask.reshape(atom_mask.shape[0], -1)
@@ -226,13 +226,13 @@ class Diffusion(L.LightningModule):
             X_dense, E_dense, node_mask=node_padding_mask
         )
         ground_truth_graph.apply_edge_givens()  # Enforce: diagonals=NO-EDGE, padding=zeros
-        ground_truth_graph_mask = ground_truth_graph.ground_truth_atom_mask.tensor
+        ground_truth_graph_mask = ground_truth_graph.ground_truth_atom_mask
 
         # 1.4: Build coords object
         ground_truth_coords = Coordinates(
-            coordinates=C_dense, atom_mask=ground_truth_graph_mask
+            coordinates=C_dense.reshape(C_dense.shape[0], -1, 3),
+            atom_mask=ground_truth_graph_mask
         )
-        ground_truth_coords = ground_truth_coords.reshape_to_atoms()
 
         # 1.5: Append dense bonds data
         if self.data_manager.load_bonds:
@@ -292,8 +292,8 @@ class Diffusion(L.LightningModule):
         discrete_sigma, discrete_dsigma = self.discrete_noise(t)
         graph_noised = self._noise_discrete(ground_truth_graph, discrete_sigma)
         graph_noised.apply_edge_givens()  # Enforce: diagonals=NO-EDGE, padding=zeros
-        partially_noised_graph_mask = graph_noised.partial_atom_mask.tensor
-        atom_mask = graph_noised.partial_atom_mask.tensor
+        partially_noised_graph_mask = graph_noised.partial_atom_mask
+        atom_mask = graph_noised.partial_atom_mask
 
         # 3.3 Noise the coordinates
         C0_shifted, coords_noised = self._noise_continuous(
@@ -800,7 +800,7 @@ class Diffusion(L.LightningModule):
         # Coordinates object - will update via set_coordinates/set_mask
         current_coords = Coordinates.random(
             shape=(batch_size, max_atoms, 3),
-            atom_mask=current_graph.partial_atom_mask.tensor,
+            atom_mask=current_graph.partial_atom_mask,
             device=self.device,
         )
 
@@ -849,7 +849,7 @@ class Diffusion(L.LightningModule):
                 X_tensor,
                 E_tensor,
                 C_tensor,
-                atom_mask=current_graph.partial_atom_mask.tensor,
+                atom_mask=current_graph.partial_atom_mask,
                 node_mask=current_graph.node_mask,
                 cond=cond,
                 sampling=True,
@@ -870,7 +870,7 @@ class Diffusion(L.LightningModule):
             current_graph.rxn_onehot = E_new
             current_graph.apply_edge_givens()  # Enforce: diagonals=NO-EDGE
             current_coords.set_coordinates(C_new, apply_mask=False)
-            current_coords.set_mask(current_graph.partial_atom_mask.tensor)
+            current_coords.set_mask(current_graph.partial_atom_mask)
 
             # 4.6 Update self-conditioning tensors if applicable
             if self.self_conditioning:
@@ -899,7 +899,7 @@ class Diffusion(L.LightningModule):
                 X_tensor,
                 E_tensor,
                 C_tensor,
-                atom_mask=current_graph.partial_atom_mask.tensor,
+                atom_mask=current_graph.partial_atom_mask,
                 node_mask=current_graph.node_mask,
                 cond=cond,
                 sampling=True,
@@ -917,7 +917,7 @@ class Diffusion(L.LightningModule):
             )
             final_graph.apply_edge_givens()
             final_coords = Coordinates(
-                coordinates=C_pred, atom_mask=current_graph.partial_atom_mask.tensor
+                coordinates=C_pred, atom_mask=current_graph.partial_atom_mask
             )
             final_coords.scale(1 / self.normalization_scale)
         else:

@@ -31,7 +31,7 @@ class MSELoss(LossBase):
         """This is batchwise time-weighted MSE loss, but we can't do the full loss here because we need to time-weight by batch item."""
         C_pred = pred.atom_coords  # [B, A, 3]
         C_true = target.atom_coords  # [B, A, 3]
-        mask = target.atom_mask.tensor.to(dtype=C_true.dtype)  # [B, A]
+        mask = target.atom_mask.to(dtype=C_true.dtype)  # [B, A]
         mask3 = mask.unsqueeze(-1).expand_as(C_true)  # [B, A, 3]
         mse = (C_true - C_pred) ** 2  # [B, A, 3]
         numer = (mse * mask3).sum(dim=(1, 2))  # [B]

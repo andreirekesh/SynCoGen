@@ -159,7 +159,7 @@ def build_molecules_from_graphs(
                         if graphs.is_batched
                         else coords.reshape(-1, 3)
                     )
-                    atom_mask = graph_i.ground_truth_atom_mask.tensor.reshape(-1).bool()
+                    atom_mask = graph_i.ground_truth_atom_mask.reshape(-1).bool()
                     valid_coords = atom_coords[: atom_mask.shape[0], :][atom_mask]
 
                     if valid_coords.shape[0] == mol.GetNumAtoms():

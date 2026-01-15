@@ -32,7 +32,7 @@ class SmoothLDDTLoss(LossBase):
         """Base per-graph smooth LDDT loss (no time weighting or coef)."""
         C0 = target.atom_coords
         C1 = pred.atom_coords
-        coords_mask = target.atom_mask.bool().tensor
+        coords_mask = target.atom_mask.bool()
         # Handle unbatched case [A, 3] -> [1, A, 3]
         if C0.dim() == 2:
             C0 = C0.unsqueeze(0)
