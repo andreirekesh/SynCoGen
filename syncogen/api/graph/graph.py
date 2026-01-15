@@ -41,10 +41,10 @@ class BBRxnGraph:
     Derived representations (indices, tuples) are computed lazily and cached.
 
     Use factory methods for construction:
-        - BBRxnGraph.from_onehot(bb_onehot, rxn_onehot)
-        - BBRxnGraph.from_indices(bb_indices, rxn_indices)
-        - BBRxnGraph.from_tuple(bb_indices, rxn_tuple)
-        - BBRxnGraph.masked(max_nodes, ...)
+        - BBRxnGraph.from_onehot(bb_onehot, rxn_onehot, node_mask) - node_mask required
+        - BBRxnGraph.from_indices(bb_indices, rxn_indices) - assumes all valid if no mask
+        - BBRxnGraph.from_tuple(bb_indices, rxn_tuple) - assumes all valid if no mask
+        - BBRxnGraph.masked(max_nodes, ...) - creates node_mask from n_nodes
 
     Properties automatically update when bb_onehot or rxn_onehot are modified.
     """
@@ -58,7 +58,7 @@ class BBRxnGraph:
         self,
         bb_onehot: torch.Tensor,
         rxn_onehot: torch.Tensor,
-        node_mask: Optional[torch.Tensor] = None,
+        node_mask: torch.Tensor,
         bb_pad: int = 1,
         rxn_pad: int = 2,
     ):
@@ -79,17 +79,13 @@ class BBRxnGraph:
 
         # Move secondary tensors to match primary
         self._rxn_onehot = rxn_onehot.to(device=device, dtype=dtype)
-        self._node_mask = node_mask.to(device=device, dtype=bool) if node_mask is not None else None
+        self._node_mask = node_mask.to(device=device, dtype=bool)
 
         self.bb_pad = bb_pad
         self.rxn_pad = rxn_pad
 
         # Infer batched mode from tensor shapes
         self._is_batched = bb_onehot.dim() == 3
-
-        # Initialize node_mask if not provided
-        if self._node_mask is None:
-            self._node_mask = self._compute_node_mask()
 
         # Invalidatable caches for derived representations
         self._bb_indices = None
@@ -105,7 +101,7 @@ class BBRxnGraph:
         cls,
         bb_onehot: torch.Tensor,
         rxn_onehot: torch.Tensor,
-        node_mask: Optional[torch.Tensor] = None,
+        node_mask: torch.Tensor,
         bb_pad: int = 1,
         rxn_pad: int = 2,
     ) -> "BBRxnGraph":
@@ -114,7 +110,7 @@ class BBRxnGraph:
         Args:
             bb_onehot: (N, D_bb) or (B, N, D_bb) building block one-hot
             rxn_onehot: (N, N, D_rxn) or (B, N, N, D_rxn) reaction one-hot
-            node_mask: Optional (N,) or (B, N) mask for valid nodes
+            node_mask: (N,) or (B, N) mask for valid nodes (REQUIRED)
             bb_pad: Number of padding dims in BB one-hot
             rxn_pad: Number of padding dims in rxn one-hot
         """
@@ -125,6 +121,7 @@ class BBRxnGraph:
         cls,
         bb_indices: torch.Tensor,
         rxn_indices: torch.Tensor,
+        node_mask: Optional[torch.Tensor] = None,
         bb_pad: int = 1,
         rxn_pad: int = 2,
     ) -> "BBRxnGraph":
@@ -133,6 +130,7 @@ class BBRxnGraph:
         Args:
             bb_indices: (N,) or (B, N) building block indices
             rxn_indices: (N, N) or (B, N, N) flat reaction indices
+            node_mask: Optional (N,) or (B, N) mask. If None, assumes all nodes valid.
             bb_pad: Number of padding dims in BB one-hot
             rxn_pad: Number of padding dims in rxn one-hot
         """
@@ -140,13 +138,19 @@ class BBRxnGraph:
         rxn_onehot = rxn_indices_to_onehot(
             rxn_indices, cls.VOCAB_NUM_RXNS, cls.VOCAB_NUM_CENTERS, rxn_pad
         )
-        return cls(bb_onehot, rxn_onehot, bb_pad=bb_pad, rxn_pad=rxn_pad)
+        if node_mask is None:
+            # Default: all nodes valid (for non-padded graphs)
+            node_mask = torch.ones(
+                bb_indices.shape, dtype=torch.bool, device=bb_indices.device
+            )
+        return cls(bb_onehot, rxn_onehot, node_mask, bb_pad, rxn_pad)
 
     @classmethod
     def from_tuple(
         cls,
         bb_indices: torch.Tensor,
         rxn_tuple: Union[torch.Tensor, List[torch.Tensor]],
+        node_mask: Optional[torch.Tensor] = None,
         bb_pad: int = 1,
         rxn_pad: int = 2,
     ) -> "BBRxnGraph":
@@ -156,6 +160,7 @@ class BBRxnGraph:
             bb_indices: (N,) or (B, N) building block indices
             rxn_tuple: (E, 5) or List[(E_i, 5)] reaction tuples
                        Each tuple: [rxn_id, node1, node2, center1, center2]
+            node_mask: Optional (N,) or (B, N) mask. If None, assumes all nodes valid.
             bb_pad: Number of padding dims in BB one-hot
             rxn_pad: Number of padding dims in rxn one-hot
         """
@@ -170,7 +175,12 @@ class BBRxnGraph:
         rxn_onehot = rxn_tuple_to_onehot(
             rxn_tuple, n_nodes, cls.VOCAB_NUM_RXNS, cls.VOCAB_NUM_CENTERS, rxn_pad
         )
-        return cls(bb_onehot, rxn_onehot, bb_pad=bb_pad, rxn_pad=rxn_pad)
+        if node_mask is None:
+            # Default: all nodes valid (for non-padded graphs)
+            node_mask = torch.ones(
+                bb_indices.shape, dtype=torch.bool, device=bb_indices.device
+            )
+        return cls(bb_onehot, rxn_onehot, node_mask, bb_pad, rxn_pad)
 
     @classmethod
     def masked(
@@ -271,7 +281,9 @@ class BBRxnGraph:
     def rxn_tuple(self) -> Union[torch.Tensor, List[torch.Tensor]]:
         """Reaction tuples (E, 5) or List[(E_i, 5)]. Computed lazily."""
         if self._rxn_tuple is None:
-            self._rxn_tuple = rxn_onehot_to_tuple(self._rxn_onehot, self.VOCAB_NUM_CENTERS)
+            self._rxn_tuple = rxn_onehot_to_tuple(
+                self._rxn_onehot, self.VOCAB_NUM_CENTERS
+            )
         return self._rxn_tuple
 
     @property
@@ -288,7 +300,9 @@ class BBRxnGraph:
                     for b in range(self.batch_size)
                 ]
             else:
-                self._building_blocks = [BuildingBlock(int(idx)) for idx in self.bb_indices]
+                self._building_blocks = [
+                    BuildingBlock(int(idx)) for idx in self.bb_indices
+                ]
         return self._building_blocks
 
     @property
@@ -301,7 +315,8 @@ class BBRxnGraph:
         if self._reactions is None:
             if self.is_batched:
                 self._reactions = [
-                    [Reaction(rxn) for rxn in self.rxn_tuple[b]] for b in range(self.batch_size)
+                    [Reaction(rxn) for rxn in self.rxn_tuple[b]]
+                    for b in range(self.batch_size)
                 ]
             else:
                 self._reactions = [Reaction(rxn) for rxn in self.rxn_tuple]
@@ -319,10 +334,6 @@ class BBRxnGraph:
         self._rxn_indices = None
         self._rxn_tuple = None
         self._reactions = None
-
-    def _compute_node_mask(self) -> torch.Tensor:
-        """Compute node mask from one-hot (1 where sum > 0)."""
-        return (self._bb_onehot.sum(dim=-1) > 0).to(dtype=bool)
 
     # ============ Dimension Properties ============
 
@@ -381,23 +392,16 @@ class BBRxnGraph:
 
     @property
     def unmasked_bbs(self) -> torch.Tensor:
-        """Boolean tensor indicating which BBs are not MASK tokens.
-
-        A BB is unmasked if: (1) MASK channel is 0, and (2) it's a valid one-hot (not padding zeros).
-        """
-        is_not_mask = self._bb_onehot[..., -1] == 0
-        is_valid = self._bb_onehot.any(dim=-1)  # Padding BBs are all zeros
-        return is_not_mask & is_valid
+        """Boolean tensor indicating which BBs are unmasked (have a real building block)."""
+        return self._bb_onehot[..., -1] == 0
 
     @property
     def unmasked_rxns(self) -> torch.Tensor:
-        """Boolean tensor indicating which reactions are not masked.
+        """Boolean tensor indicating which reactions are not MASK.
 
-        An edge is unmasked if: (1) MASK channel is 0, and (2) it's a valid one-hot (not padding zeros).
+        Note: With padding as MASK (matching old code), we only check the MASK channel.
         """
-        is_not_mask = self._rxn_onehot[..., -1] == 0
-        is_valid = self._rxn_onehot.any(dim=-1)  # Padding edges are all zeros
-        return is_not_mask & is_valid
+        return self._rxn_onehot[..., -1] == 0
 
     @property
     def compatibility_masks(self) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -406,7 +410,9 @@ class BBRxnGraph:
         Returns:
             (bb_mask, rxn_mask) boolean tensors of same shapes as one-hots
         """
-        return compute_compatibility_masks(self._bb_onehot, self._rxn_onehot, COMPATIBILITY)
+        return compute_compatibility_masks(
+            self._bb_onehot, self._rxn_onehot, COMPATIBILITY
+        )
 
     @property
     def ground_truth_atom_mask(self) -> AtomMask:
@@ -417,7 +423,11 @@ class BBRxnGraph:
         if self.is_batched:
             n_bbs = self._bb_onehot.shape[1]
             mask = torch.ones(
-                self.batch_size, n_bbs, MAX_ATOMS_PER_BB, dtype=torch.bool, device=self.device
+                self.batch_size,
+                n_bbs,
+                MAX_ATOMS_PER_BB,
+                dtype=torch.bool,
+                device=self.device,
             )
 
             for b in range(self.batch_size):
@@ -427,10 +437,14 @@ class BBRxnGraph:
                     center1_idx = reaction.center1_idx
                     center2_idx = reaction.center2_idx
                     if reaction.r1_atom_dropped:
-                        r1_atom_idx = self.building_blocks[b][node1_order].get_atom_idx(center1_idx)
+                        r1_atom_idx = self.building_blocks[b][node1_order].get_atom_idx(
+                            center1_idx
+                        )
                         mask[b, node1_order, r1_atom_idx] = False
                     if reaction.r2_atom_dropped:
-                        r2_atom_idx = self.building_blocks[b][node2_order].get_atom_idx(center2_idx)
+                        r2_atom_idx = self.building_blocks[b][node2_order].get_atom_idx(
+                            center2_idx
+                        )
                         mask[b, node2_order, r2_atom_idx] = False
 
                 for i in range(n_bbs):
@@ -452,10 +466,14 @@ class BBRxnGraph:
             node1_order, node2_order = reaction.node1_idx, reaction.node2_idx
             center1_idx, center2_idx = reaction.center1_idx, reaction.center2_idx
             if reaction.r1_atom_dropped:
-                r1_atom_idx = self.building_blocks[node1_order].get_atom_idx(center1_idx)
+                r1_atom_idx = self.building_blocks[node1_order].get_atom_idx(
+                    center1_idx
+                )
                 mask[node1_order, r1_atom_idx] = False
             if reaction.r2_atom_dropped:
-                r2_atom_idx = self.building_blocks[node2_order].get_atom_idx(center2_idx)
+                r2_atom_idx = self.building_blocks[node2_order].get_atom_idx(
+                    center2_idx
+                )
                 mask[node2_order, r2_atom_idx] = False
 
         for i in range(n_bbs):
@@ -482,7 +500,11 @@ class BBRxnGraph:
         if self.is_batched:
             n_bbs = self._bb_onehot.shape[1]
             valid = torch.zeros(
-                self.batch_size, n_bbs, MAX_ATOMS_PER_BB, dtype=torch.bool, device=self.device
+                self.batch_size,
+                n_bbs,
+                MAX_ATOMS_PER_BB,
+                dtype=torch.bool,
+                device=self.device,
             )
             for b in range(self.batch_size):
                 for i in range(n_bbs):
@@ -496,7 +518,9 @@ class BBRxnGraph:
             return AtomMask(valid.reshape(self.batch_size, -1).long(), is_batched=True)
 
         n_bbs = self._bb_onehot.shape[0]
-        valid = torch.zeros(n_bbs, MAX_ATOMS_PER_BB, dtype=torch.bool, device=self.device)
+        valid = torch.zeros(
+            n_bbs, MAX_ATOMS_PER_BB, dtype=torch.bool, device=self.device
+        )
         for i in range(n_bbs):
             bb = self.building_blocks[i]
             n_valid = MAX_ATOMS_PER_BB if bb.is_mask else bb.num_atoms
@@ -528,7 +552,9 @@ class BBRxnGraph:
             assert (
                 self.unmasked_bbs[:n].all() and self.unmasked_rxns[:n, :n].all()
             ), "Cannot build RDKit molecules with masked building blocks or reactions"
-            return build_molecule(self.bb_indices[:n], self.rxn_tuple, smiles=return_smiles)
+            return build_molecule(
+                self.bb_indices[:n], self.rxn_tuple, smiles=return_smiles
+            )
 
         outputs = []
         for b in range(self.batch_size):
@@ -537,7 +563,9 @@ class BBRxnGraph:
                 self.unmasked_bbs[b, :n].all() and self.unmasked_rxns[b, :n, :n].all()
             ), f"Cannot build RDKit molecules with masked building blocks or reactions (batch {b})"
             outputs.append(
-                build_molecule(self.bb_indices[b, :n], self.rxn_tuple[b], smiles=return_smiles)
+                build_molecule(
+                    self.bb_indices[b, :n], self.rxn_tuple[b], smiles=return_smiles
+                )
             )
         return outputs
 
@@ -548,7 +576,9 @@ class BBRxnGraph:
         return BBRxnGraph(
             bb_onehot=self._bb_onehot.to(device),
             rxn_onehot=self._rxn_onehot.to(device),
-            node_mask=self._node_mask.to(device) if self._node_mask is not None else None,
+            node_mask=(
+                self._node_mask.to(device) if self._node_mask is not None else None
+            ),
             bb_pad=self.bb_pad,
             rxn_pad=self.rxn_pad,
         )
@@ -578,7 +608,9 @@ class BBRxnGraph:
 
     def __repr__(self) -> str:
         if self.is_batched:
-            return f"BBRxnGraph(batched, B={self.batch_size}, max_nodes={self.num_nodes})"
+            return (
+                f"BBRxnGraph(batched, B={self.batch_size}, max_nodes={self.num_nodes})"
+            )
         return f"BBRxnGraph(nodes={self.num_nodes})"
 
     ##########################################################################################
@@ -639,7 +671,7 @@ class BBRxnGraph:
 
         # 2. Add inter-fragment bonds from reactions
         for reaction in self.reactions:
-            if reaction.is_mask or reaction.is_no_reaction:
+            if reaction.is_mask:
                 continue
 
             bb1 = self.building_blocks[reaction.node1_idx]
@@ -656,7 +688,9 @@ class BBRxnGraph:
             # If an atom is dropped, use its neighbor instead
             if reaction.r1_atom_dropped:
                 atom = bb1.mol.GetAtomWithIdx(center1_atom_local)
-                neighbor = atom.GetNeighbors()[0]  # First neighbor (leaving group removed)
+                neighbor = atom.GetNeighbors()[
+                    0
+                ]  # First neighbor (leaving group removed)
                 atom1_global = neighbor.GetIdx() + reaction.node1_idx * MAX_ATOMS_PER_BB
 
             if reaction.r2_atom_dropped:

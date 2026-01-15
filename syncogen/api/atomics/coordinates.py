@@ -40,13 +40,17 @@ class Coordinates(AtomReshapable):
             # 3D tensor with last dim=3 is batched; 2D with last dim=3 is unbatched
             # 4D tensor is batched BB view; 3D with second-to-last != 3 might be BB view
             is_batched = (
-                coordinates.dim() >= 3 and coordinates.shape[-1] == 3 and coordinates.dim() > 2
+                coordinates.dim() >= 3
+                and coordinates.shape[-1] == 3
+                and coordinates.dim() > 2
             )
 
         # Initialize atom_mask if not provided
         if atom_mask is None:
             atom_mask = torch.ones(
-                coordinates.shape[:-1], device=coordinates.device, dtype=coordinates.dtype
+                coordinates.shape[:-1],
+                device=coordinates.device,
+                dtype=coordinates.dtype,
             )
 
         # Initialize parent class
@@ -54,7 +58,8 @@ class Coordinates(AtomReshapable):
 
         # Initialize atom mask
         self.atom_mask = AtomMask(
-            atom_mask.to(device=coordinates.device, dtype=coordinates.dtype), is_batched=is_batched
+            atom_mask.to(device=coordinates.device, dtype=coordinates.dtype),
+            is_batched=is_batched,
         )
 
         # Set batch-specific attributes
@@ -65,7 +70,9 @@ class Coordinates(AtomReshapable):
                 if self.is_bbs_view
                 else coordinates.shape[1]
             )
-            self.n_atoms = self.atom_mask.tensor.reshape(self.batch_size, -1).sum(dim=1).long()
+            self.n_atoms = (
+                self.atom_mask.tensor.reshape(self.batch_size, -1).sum(dim=1).long()
+            )
         else:
             self.max_atoms = (
                 coordinates.shape[0] * coordinates.shape[1]
@@ -183,7 +190,9 @@ class Coordinates(AtomReshapable):
 
         return cls(coords, atom_mask, is_batched)
 
-    def attach_pharmacophores(self, pharm_coords: torch.Tensor, pharm_padding_mask: torch.Tensor):
+    def attach_pharmacophores(
+        self, pharm_coords: torch.Tensor, pharm_padding_mask: torch.Tensor
+    ):
         """Attach pharmacophores to coordinates with explicit mask.
 
         - Keeps atoms and pharm as separate tensors internally
@@ -244,7 +253,9 @@ class Coordinates(AtomReshapable):
             ), f"Mask shape {custom_mask.shape} must match tensor shape {self.tensor.shape[:-1]}"
             mask = custom_mask.unsqueeze(-1)
         else:
-            assert self.atom_mask is not None, "Must provide atom_mask to compute center"
+            assert (
+                self.atom_mask is not None
+            ), "Must provide atom_mask to compute center"
             mask = self.atom_mask.tensor.unsqueeze(-1).bool()
         if self.is_batched:
             centers = (self.tensor * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
@@ -268,12 +279,18 @@ class Coordinates(AtomReshapable):
             self.tensor = ops_center(self.tensor, mask, custom_center)
             return self
         # Concatenate atoms + pharm; compute center from atoms only
-        coords_cat = torch.cat([self.tensor, self.pharm_coords], dim=1 if self.is_batched else 0)
+        coords_cat = torch.cat(
+            [self.tensor, self.pharm_coords], dim=1 if self.is_batched else 0
+        )
         zeros_pharm = torch.zeros_like(
             self.pharm_padding_mask, dtype=mask.dtype, device=self.tensor.device
         )
         compute_mask = torch.cat([mask, zeros_pharm], dim=1 if self.is_batched else 0)
-        out = ops_center(coords_cat, compute_mask, custom_center)
+        # apply_mask: atoms use mask, pharms use pharm_padding_mask (keep valid pharms, zero padding)
+        apply_mask = torch.cat(
+            [mask, self.pharm_padding_mask.bool()], dim=1 if self.is_batched else 0
+        )
+        out = ops_center(coords_cat, compute_mask, custom_center, apply_mask=apply_mask)
         # Split back
         if self.is_batched:
             self.tensor = out[:, : self.max_atoms]
@@ -301,7 +318,9 @@ class Coordinates(AtomReshapable):
         if not self.has_pharmacophores:
             self.tensor = ops_random_rotate(self.tensor, self.atom_mask.tensor)
             return self
-        coords_cat = torch.cat([self.tensor, self.pharm_coords], dim=1 if self.is_batched else 0)
+        coords_cat = torch.cat(
+            [self.tensor, self.pharm_coords], dim=1 if self.is_batched else 0
+        )
         out = ops_random_rotate(coords_cat, self.atom_and_pharmacophore_mask)
         if self.is_batched:
             self.tensor = out[:, : self.max_atoms]
@@ -314,9 +333,13 @@ class Coordinates(AtomReshapable):
     def random_translate(self, scale: float = 1.0):
         """Apply random translation to coordinates (and pharmacophores if attached)."""
         if not self.has_pharmacophores:
-            self.tensor = ops_random_translate(self.tensor, self.atom_mask.tensor, scale)
+            self.tensor = ops_random_translate(
+                self.tensor, self.atom_mask.tensor, scale
+            )
             return self
-        coords_cat = torch.cat([self.tensor, self.pharm_coords], dim=1 if self.is_batched else 0)
+        coords_cat = torch.cat(
+            [self.tensor, self.pharm_coords], dim=1 if self.is_batched else 0
+        )
         out = ops_random_translate(coords_cat, self.atom_and_pharmacophore_mask, scale)
         if self.is_batched:
             self.tensor = out[:, : self.max_atoms]
@@ -327,7 +350,10 @@ class Coordinates(AtomReshapable):
         return self
 
     def kabsch_align_to(
-        self, reference: torch.Tensor, mask: torch.Tensor = None, weights: torch.Tensor = None
+        self,
+        reference: torch.Tensor,
+        mask: torch.Tensor = None,
+        weights: torch.Tensor = None,
     ):
         """Align (rotate) coordinates to reference using Kabsch (weighted rigid align).
 
@@ -343,19 +369,25 @@ class Coordinates(AtomReshapable):
             self.tensor = ops_kabsch(self.tensor, reference, use_mask, weights)
             return self
         # Concatenate coords and build masks/weights
-        coords_cat = torch.cat([self.tensor, self.pharm_coords], dim=1 if self.is_batched else 0)
+        coords_cat = torch.cat(
+            [self.tensor, self.pharm_coords], dim=1 if self.is_batched else 0
+        )
         # Reference is atoms-only; pad to match concatenated length so pharm points "ride along" with zero weight
         if self.is_batched:
             B = reference.shape[0]
             pharm_len = self.pharm_coords.shape[1]
-            pad = torch.zeros((B, pharm_len, 3), device=reference.device, dtype=reference.dtype)
+            pad = torch.zeros(
+                (B, pharm_len, 3), device=reference.device, dtype=reference.dtype
+            )
             reference_cat = torch.cat([reference, pad], dim=1)
             apply_mask = self.atom_and_pharmacophore_mask
             w = torch.zeros_like(apply_mask, dtype=coords_cat.dtype)
             w[:, : self.max_atoms] = 1
         else:
             pharm_len = self.pharm_coords.shape[0]
-            pad = torch.zeros((pharm_len, 3), device=reference.device, dtype=reference.dtype)
+            pad = torch.zeros(
+                (pharm_len, 3), device=reference.device, dtype=reference.dtype
+            )
             reference_cat = torch.cat([reference, pad], dim=0)
             apply_mask = self.atom_and_pharmacophore_mask
             w = torch.zeros_like(apply_mask, dtype=coords_cat.dtype)
@@ -377,12 +409,18 @@ class Coordinates(AtomReshapable):
         self.atom_mask = AtomMask(atom_mask.long(), is_batched=self.is_batched)
         # Update n_atoms derived from mask
         if self.is_batched:
-            assert hasattr(self, "batch_size"), "batch_size must be set for batched Coordinates"
-            self.n_atoms = self.atom_mask.tensor.reshape(self.batch_size, -1).sum(dim=1).long()
+            assert hasattr(
+                self, "batch_size"
+            ), "batch_size must be set for batched Coordinates"
+            self.n_atoms = (
+                self.atom_mask.tensor.reshape(self.batch_size, -1).sum(dim=1).long()
+            )
         else:
             self.n_atoms = int(self.atom_mask.tensor.reshape(-1).sum().item())
         # Maintain invariant: masked positions are zero
-        self.tensor = self.tensor * self.atom_mask.tensor.unsqueeze(-1).to(self.tensor.dtype)
+        self.tensor = self.tensor * self.atom_mask.tensor.unsqueeze(-1).to(
+            self.tensor.dtype
+        )
         return self
 
     def set_coordinates(self, coordinates: torch.Tensor, apply_mask: bool = True):
@@ -392,7 +430,9 @@ class Coordinates(AtomReshapable):
         ), f"New coordinates shape {coordinates.shape} must match existing shape {self.tensor.shape}"
         self.tensor = coordinates
         if apply_mask:
-            self.tensor = self.tensor * self.atom_mask.tensor.unsqueeze(-1).to(self.tensor.dtype)
+            self.tensor = self.tensor * self.atom_mask.tensor.unsqueeze(-1).to(
+                self.tensor.dtype
+            )
         return self
 
     def reshape_to_atoms(self):
@@ -417,7 +457,9 @@ class Coordinates(AtomReshapable):
             self.tensor = torch.from_numpy(self.tensor)
         return self
 
-    def to(self, device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None):
+    def to(
+        self, device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None
+    ):
         """Move coordinates to specified device and/or dtype.
 
         Args:
@@ -453,15 +495,21 @@ class Coordinates(AtomReshapable):
         )
         if self.has_pharmacophores:
             coords.attach_pharmacophores(
-                pharm_coords=self.pharm_coords.clone() if self.pharm_coords is not None else None,
+                pharm_coords=(
+                    self.pharm_coords.clone() if self.pharm_coords is not None else None
+                ),
                 pharm_padding_mask=(
-                    self.pharm_padding_mask.clone() if self.pharm_padding_mask is not None else None
+                    self.pharm_padding_mask.clone()
+                    if self.pharm_padding_mask is not None
+                    else None
                 ),
             )
         if self.has_bonds:
             coords.attach_bonds(
                 bonds=self.bonds.clone() if self.bonds is not None else None,
-                bonds_mask=self.bonds_mask.clone() if self.bonds_mask is not None else None,
+                bonds_mask=(
+                    self.bonds_mask.clone() if self.bonds_mask is not None else None
+                ),
             )
         return coords
 
@@ -475,20 +523,28 @@ class Coordinates(AtomReshapable):
             raise TypeError("Indexing is only valid for batched Coordinates")
         coords = Coordinates(
             coordinates=self.tensor[idx],
-            atom_mask=self.atom_mask.tensor[idx] if self.atom_mask is not None else None,
+            atom_mask=(
+                self.atom_mask.tensor[idx] if self.atom_mask is not None else None
+            ),
             is_batched=False,
         )
         if self.has_pharmacophores:
             coords.attach_pharmacophores(
-                pharm_coords=self.pharm_coords[idx] if self.pharm_coords is not None else None,
+                pharm_coords=(
+                    self.pharm_coords[idx] if self.pharm_coords is not None else None
+                ),
                 pharm_padding_mask=(
-                    self.pharm_padding_mask[idx] if self.pharm_padding_mask is not None else None
+                    self.pharm_padding_mask[idx]
+                    if self.pharm_padding_mask is not None
+                    else None
                 ),
             )
         if self.has_bonds:
             coords.attach_bonds(
                 bonds=self.bonds[idx] if self.bonds is not None else None,
-                bonds_mask=self.bonds_mask[idx] if self.bonds_mask is not None else None,
+                bonds_mask=(
+                    self.bonds_mask[idx] if self.bonds_mask is not None else None
+                ),
             )
         return coords
 

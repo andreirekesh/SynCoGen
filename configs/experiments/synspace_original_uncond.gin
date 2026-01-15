@@ -57,6 +57,7 @@ Diffusion.losses = [@NLLLoss(), @MSELoss(), @BondLengthLoss(), @PairwiseDistance
 Diffusion.generate_eval_samples = True
 Diffusion.sample_every_n_epochs = 1
 Diffusion.discrete_strategy = @MDLM()
+Diffusion.integrator = @EulerIntegrator()
 Diffusion.backbone = "semla"
 Diffusion.scale_noise = True
 Diffusion.scale_noise_factor = 0.2

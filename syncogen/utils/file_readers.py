@@ -209,7 +209,9 @@ def mol2_to_coordinates(
 
     # Fill coordinates tensor
     # Keep a per-fragment mapping: global atom index -> local position index
-    frag_atoms_global: Dict[int, Dict[int, int]] = {}  # order_idx -> {global_idx: local_position}
+    frag_atoms_global: Dict[int, Dict[int, int]] = (
+        {}
+    )  # order_idx -> {global_idx: local_position}
     for order_idx in sorted(frag_atoms.keys()):
         atoms = frag_atoms[order_idx]
         frag_atoms_global[order_idx] = {}
@@ -220,7 +222,10 @@ def mol2_to_coordinates(
             position_idx = 0  # Index into valid positions
             for global_idx, coord in atoms:
                 # Find next valid position
-                while position_idx < MAX_ATOMS_PER_BB and not valid_positions[position_idx]:
+                while (
+                    position_idx < MAX_ATOMS_PER_BB
+                    and not valid_positions[position_idx]
+                ):
                     position_idx += 1
 
                 if position_idx < MAX_ATOMS_PER_BB:
@@ -228,15 +233,21 @@ def mol2_to_coordinates(
                         coord, dtype=torch.float32
                     )
                     coords_mask[order_idx, position_idx] = True
-                    frag_atoms_global[order_idx][global_idx] = position_idx  # Store actual position
+                    frag_atoms_global[order_idx][
+                        global_idx
+                    ] = position_idx  # Store actual position
                     position_idx += 1
         else:
             # Old behavior: place atoms sequentially (incorrect for reactions with dropped atoms)
             for local_idx, (global_idx, coord) in enumerate(atoms):
                 if local_idx < MAX_ATOMS_PER_BB:
-                    coords_tensor[order_idx, local_idx] = torch.tensor(coord, dtype=torch.float32)
+                    coords_tensor[order_idx, local_idx] = torch.tensor(
+                        coord, dtype=torch.float32
+                    )
                     coords_mask[order_idx, local_idx] = True
-                    frag_atoms_global[order_idx][global_idx] = local_idx  # Store actual position
+                    frag_atoms_global[order_idx][
+                        global_idx
+                    ] = local_idx  # Store actual position
 
     if not return_bonds:
         return coords_tensor, coords_mask, None

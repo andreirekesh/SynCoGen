@@ -14,7 +14,8 @@ class AtomReshapable:
         atom_dim = 1 if self.is_batched else 0
         # Validate shape consistency without storing mutable view state
         if not (
-            flat_tensor.dim() > atom_dim + 1 and flat_tensor.shape[atom_dim + 1] == MAX_ATOMS_PER_BB
+            flat_tensor.dim() > atom_dim + 1
+            and flat_tensor.shape[atom_dim + 1] == MAX_ATOMS_PER_BB
         ):
             n_along = flat_tensor.shape[atom_dim]
             assert (
@@ -67,7 +68,8 @@ class AtomReshapable:
     def is_bbs_view(self) -> bool:
         atom_dim = 1 if self.is_batched else 0
         return (
-            self.tensor.dim() > atom_dim + 1 and self.tensor.shape[atom_dim + 1] == MAX_ATOMS_PER_BB
+            self.tensor.dim() > atom_dim + 1
+            and self.tensor.shape[atom_dim + 1] == MAX_ATOMS_PER_BB
         )
 
     @property

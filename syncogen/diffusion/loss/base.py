@@ -36,7 +36,9 @@ class LossBase(nn.Module):
         """Return loss name. Defaults to class name if not explicitly set."""
         return self._name or self.__class__.__name__
 
-    def apply_time_weight(self, loss: torch.Tensor, t: Optional[torch.Tensor]) -> torch.Tensor:
+    def apply_time_weight(
+        self, loss: torch.Tensor, t: Optional[torch.Tensor]
+    ) -> torch.Tensor:
         """Optionally apply time weighting. Loss shapes are broadcast-compatible.
         NLLLoss should not call this (it has its own sigma weighting)."""
         if not self.time_weighted:
@@ -49,7 +51,9 @@ class LossBase(nn.Module):
             time_weight = 1.0 / t
         return loss * time_weight
 
-    def apply_t_threshold(self, loss: torch.Tensor, t: Optional[torch.Tensor]) -> torch.Tensor:
+    def apply_t_threshold(
+        self, loss: torch.Tensor, t: Optional[torch.Tensor]
+    ) -> torch.Tensor:
         """Optionally mask loss to timesteps t <= t_threshold."""
         if self.t_threshold is None or t is None:
             return loss
@@ -75,7 +79,9 @@ class LossList:
     def __init__(self, losses: Sequence[LossBase] = ()):
         self.losses = list(losses)
 
-    def compute_graph(self, log_p_X, log_p_E, node_mask, sigma_factor) -> dict[str, torch.Tensor]:
+    def compute_graph(
+        self, log_p_X, log_p_E, node_mask, sigma_factor
+    ) -> dict[str, torch.Tensor]:
         result = {}
         total = 0.0
         for loss in self.losses:

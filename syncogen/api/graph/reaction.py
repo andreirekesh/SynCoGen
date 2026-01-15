@@ -19,7 +19,6 @@ class Reaction:
             self.center1_idx = None
             self.center2_idx = None
             self.is_mask = False
-            self.is_no_reaction = False
         else:
             # Initialize from 5-tuple
             self.reaction_idx = int(smarts_or_tuple[0])
@@ -27,7 +26,6 @@ class Reaction:
             # Check for MASK (last index)
             if self.reaction_idx == N_REACTIONS:
                 self.is_mask = True
-                self.is_no_reaction = False
                 self.smarts = None
                 self.node1_idx = None
                 self.node2_idx = None
@@ -39,12 +37,13 @@ class Reaction:
 
             # Normal reaction
             self.is_mask = False
-            self.is_no_reaction = False
             self.node1_idx = int(smarts_or_tuple[1])
             self.node2_idx = int(smarts_or_tuple[2])
             self.center1_idx = int(smarts_or_tuple[3])
             self.center2_idx = int(smarts_or_tuple[4])
-            self.smarts = next(k for k, v in REACTIONS.items() if v["index"] == self.reaction_idx)
+            self.smarts = next(
+                k for k, v in REACTIONS.items() if v["index"] == self.reaction_idx
+            )
             self.r1_atom_dropped = bool(REACTIONS[self.smarts]["drop_bools"][0])
             self.r2_atom_dropped = bool(REACTIONS[self.smarts]["drop_bools"][1])
 

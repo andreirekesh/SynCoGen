@@ -12,7 +12,9 @@ class InterpolatorBase(abc.ABC, nn.Module):
     at time t in [0, 1], where t=0 corresponds to C0 and t=1 corresponds to C1.
     """
 
-    def forward(self, C0: torch.Tensor, C1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, C0: torch.Tensor, C1: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
         """Interpolate between C0 and C1 at time t.
 
         Args:
@@ -26,7 +28,9 @@ class InterpolatorBase(abc.ABC, nn.Module):
         return self.interpolate(C0, C1, t)
 
     @abc.abstractmethod
-    def interpolate(self, C0: torch.Tensor, C1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def interpolate(
+        self, C0: torch.Tensor, C1: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
         """Compute interpolated coordinates.
 
         Args:

@@ -16,7 +16,9 @@ class GeometricInterpolator(InterpolatorBase):
     For coordinates, you may want to use a linear interpolator instead.
     """
 
-    def interpolate(self, C0: torch.Tensor, C1: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def interpolate(
+        self, C0: torch.Tensor, C1: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
         """Geometrically interpolate between C0 and C1.
 
         Args:

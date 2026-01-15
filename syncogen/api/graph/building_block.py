@@ -10,7 +10,10 @@ class BuildingBlock:
     """Building block."""
 
     def __init__(self, smiles_or_mol_or_idx):
-        if isinstance(smiles_or_mol_or_idx, int) and smiles_or_mol_or_idx == N_BUILDING_BLOCKS:
+        if (
+            isinstance(smiles_or_mol_or_idx, int)
+            and smiles_or_mol_or_idx == N_BUILDING_BLOCKS
+        ):
             self.is_mask = True
             self.idx = N_BUILDING_BLOCKS
             self.smiles = None

@@ -25,7 +25,9 @@ def sample_categorical(categorical_probs, temperature=1.0):
     # Sample from the normalized distribution
     samples = torch.multinomial(normalized_probs, num_samples=1).squeeze(-1)
 
-    return samples.view(original_shape), normalized_probs.view(*original_shape, num_categories)
+    return samples.view(original_shape), normalized_probs.view(
+        *original_shape, num_categories
+    )
 
 
 def sample_edges(

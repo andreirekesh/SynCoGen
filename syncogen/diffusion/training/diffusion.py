@@ -27,7 +27,11 @@ from syncogen.data.utils import (
 from syncogen.diffusion.interpolation import InterpolatorBase, LinearInterpolator
 from syncogen.diffusion.loss import LossBase, LossList
 from syncogen.diffusion.noise import LogLinearNoise, NoiseBase
-from syncogen.diffusion.sampling.discrete_strategies import DiscreteStrategyBase, MDLM, PathPlanning
+from syncogen.diffusion.sampling.discrete_strategies import (
+    DiscreteStrategyBase,
+    MDLM,
+    PathPlanning,
+)
 from syncogen.diffusion.sampling.integrators import IntegratorBase, EulerIntegrator
 from syncogen.logging.metrics import (
     MetricsBase,
@@ -67,7 +71,7 @@ class Diffusion(L.LightningModule):
         discrete_noise: Optional[NoiseBase] = LogLinearNoise(),
         interpolator: Optional[InterpolatorBase] = LinearInterpolator(),
         discrete_strategy: Optional[DiscreteStrategyBase] = MDLM(),
-        integrator: Optional[IntegratorBase] = EulerIntegrator(),
+        integrator: Optional[IntegratorBase] = None,
         train_rot_align: bool = False,
         self_conditioning: bool = False,
         time_conditioning: bool = True,
@@ -96,7 +100,7 @@ class Diffusion(L.LightningModule):
         self.discrete_noise = discrete_noise
         self.interpolator = interpolator
         self.discrete_strategy = discrete_strategy
-        self.integrator = integrator
+        self.integrator = integrator if integrator is not None else EulerIntegrator()
         self.train_rot_align = train_rot_align
         self.self_conditioning = self_conditioning
         self.time_conditioning = time_conditioning
@@ -128,7 +132,9 @@ class Diffusion(L.LightningModule):
 
             # Validate probabilities are between 0 and 1
             if not all(0 <= p <= 1 for p in probs):
-                raise ValueError("All probabilities in num_fragments_probs must be between 0 and 1")
+                raise ValueError(
+                    "All probabilities in num_fragments_probs must be between 0 and 1"
+                )
 
             # Normalize probabilities to sum to 1
             probs_tensor = torch.tensor(probs, dtype=torch.float)
@@ -216,12 +222,16 @@ class Diffusion(L.LightningModule):
         )
 
         # 1.3 Build graph object
-        ground_truth_graph = BBRxnGraph.from_onehot(X_dense, E_dense)
+        ground_truth_graph = BBRxnGraph.from_onehot(
+            X_dense, E_dense, node_mask=node_padding_mask
+        )
         ground_truth_graph.apply_edge_givens()  # Enforce: diagonals=NO-EDGE, padding=zeros
         ground_truth_graph_mask = ground_truth_graph.ground_truth_atom_mask.tensor
 
         # 1.4: Build coords object
-        ground_truth_coords = Coordinates(coordinates=C_dense, atom_mask=ground_truth_graph_mask)
+        ground_truth_coords = Coordinates(
+            coordinates=C_dense, atom_mask=ground_truth_graph_mask
+        )
         ground_truth_coords = ground_truth_coords.reshape_to_atoms()
 
         # 1.5: Append dense bonds data
@@ -238,11 +248,13 @@ class Diffusion(L.LightningModule):
         if self.data_manager.load_pharmacophores:
             from syncogen.constants.constants import MAX_PHARM
 
-            pharm_types_dense, pharm_pos_dense, pharm_mask_dense = to_dense_pharmacophores(
-                pharm_types=batch.pharm_types,
-                pharm_pos=batch.pharm_pos,
-                pharm_len=batch.pharm_len,
-                max_num_pharm=MAX_PHARM,
+            pharm_types_dense, pharm_pos_dense, pharm_mask_dense = (
+                to_dense_pharmacophores(
+                    pharm_types=batch.pharm_types,
+                    pharm_pos=batch.pharm_pos,
+                    pharm_len=batch.pharm_len,
+                    max_num_pharm=MAX_PHARM,
+                )
             )
             pharms = ShepherdPharmacophores(
                 pharm_coords=pharm_pos_dense,
@@ -252,7 +264,9 @@ class Diffusion(L.LightningModule):
             )
             ground_truth_coords.attach_pharmacophores(
                 pharm_coords=pharms.coords,
-                pharm_padding_mask=pharms.padding_mask.to(dtype=ground_truth_coords.tensor.dtype),
+                pharm_padding_mask=pharms.padding_mask.to(
+                    dtype=ground_truth_coords.tensor.dtype
+                ),
             )
         else:
             pharm_types_dense = pharm_pos_dense = pharm_mask_dense = None
@@ -296,16 +310,25 @@ class Diffusion(L.LightningModule):
             )
 
         # STEP 4: Forward pass through the backbone
-        Xt, Et, Ct = graph_noised.bb_onehot, graph_noised.rxn_onehot, coords_noised.atom_coords
+        Xt, Et, Ct = (
+            graph_noised.bb_onehot,
+            graph_noised.rxn_onehot,
+            coords_noised.atom_coords,
+        )
+        node_mask = graph_noised.node_mask
         cond = (
             (pharms.types_onehot, C0_shifted.pharmacophores, pharms.padding_mask)
             if pharms is not None and C0_shifted.has_pharmacophores
             else None
         )
-        logits_X, logits_E, C0_hat = self.forward(Xt, Et, Ct, atom_mask, cond=cond)
+        logits_X, logits_E, C0_hat = self.forward(
+            Xt, Et, Ct, atom_mask, node_mask, cond=cond
+        )
 
         # STEP 5: SUBS Parameterization
-        logits_X_subs, logits_E_subs = self._subs_parameterization(graph_noised, logits_X, logits_E)
+        logits_X_subs, logits_E_subs = self._subs_parameterization(
+            graph_noised, logits_X, logits_E
+        )
 
         # STEP 6: Compute the loss
         # Prepare log probs for graph losses
@@ -406,7 +429,7 @@ class Diffusion(L.LightningModule):
             pharms.padding_mask.to(self.device),
         )
 
-    def _self_conditioning_train(self, Xt, Et, Ct, atom_mask, cond):
+    def _self_conditioning_train(self, Xt, Et, Ct, atom_mask, node_mask, cond):
         """Returns the self-conditioned graph, edge, and coordinate tensors.
         Half the time, the self-conditioned tensors are all zeros."""
         Xt_self_cond = torch.zeros_like(Xt)
@@ -414,13 +437,16 @@ class Diffusion(L.LightningModule):
         Ct_self_cond = torch.zeros_like(Ct)
 
         if torch.rand(1).item() < 0.5:
-            if cond is not None:  # if pharmacophores are present, use them for self-conditioning
+            if (
+                cond is not None
+            ):  # if pharmacophores are present, use them for self-conditioning
                 pharm_types, pharm_pos, pharm_padding_mask = cond
                 Xt_self_cond, Et_self_cond, Ct_self_cond = self.backbone(
                     torch.cat([Xt, Xt_self_cond], dim=-1),
                     torch.cat([Et, Et_self_cond], dim=-1),
                     torch.cat([Ct, Ct_self_cond], dim=-1),
                     atom_mask=atom_mask,
+                    node_mask=node_mask,
                     pharm_types=pharm_types,
                     pharm_pos=pharm_pos,
                     pharm_padding_mask=pharm_padding_mask,
@@ -431,10 +457,13 @@ class Diffusion(L.LightningModule):
                     torch.cat([Et, Et_self_cond], dim=-1),
                     torch.cat([Ct, Ct_self_cond], dim=-1),
                     atom_mask=atom_mask,
+                    node_mask=node_mask,
                 )
 
             logits_X_subs, logits_E_subs = self._subs_parameterization(
-                BBRxnGraph.from_onehot(Xt, Et), Xt_self_cond, Et_self_cond
+                BBRxnGraph.from_onehot(Xt, Et, node_mask=node_mask),
+                Xt_self_cond,
+                Et_self_cond,
             )
             Xt_self_cond = logits_X_subs.exp()
             Et_self_cond = logits_E_subs.exp()
@@ -455,12 +484,14 @@ class Diffusion(L.LightningModule):
         assert sigma.ndim == 1, sigma.shape
         return sigma
 
-    def forward(self, Xt, Et, Ct, atom_mask, cond=None, sampling=False):
+    def forward(self, Xt, Et, Ct, atom_mask, node_mask, cond=None, sampling=False):
         """Returns log score."""
 
         # If sampling, self-conditioning is handled sample()
         if not sampling and self.self_conditioning:
-            Xt, Et, Ct = self._self_conditioning_train(Xt, Et, Ct, atom_mask, cond)
+            Xt, Et, Ct = self._self_conditioning_train(
+                Xt, Et, Ct, atom_mask, node_mask, cond
+            )
 
         if cond is not None:
             pharm_types, pharm_pos, pharm_padding_mask = cond
@@ -469,12 +500,15 @@ class Diffusion(L.LightningModule):
                 Et,
                 Ct,
                 atom_mask=atom_mask,
+                node_mask=node_mask,
                 pharm_types=pharm_types,
                 pharm_pos=pharm_pos,
                 pharm_padding_mask=pharm_padding_mask,
             )
         else:
-            logits_X, logits_E, C0_pred = self.backbone(Xt, Et, Ct, atom_mask=atom_mask)
+            logits_X, logits_E, C0_pred = self.backbone(
+                Xt, Et, Ct, atom_mask=atom_mask, node_mask=node_mask
+            )
 
         return logits_X, logits_E, C0_pred
 
@@ -484,17 +518,23 @@ class Diffusion(L.LightningModule):
         Et = graph.rxn_onehot
         # Node and edge padding masks
         node_padding_mask = graph.node_mask
-        edge_padding_mask = node_padding_mask.unsqueeze(1) & node_padding_mask.unsqueeze(2)
+        edge_padding_mask = node_padding_mask.unsqueeze(
+            1
+        ) & node_padding_mask.unsqueeze(2)
 
         # Edge connectivity status
         n_edge_features = Et.shape[-1]
         active_edges = Et[..., :-2].sum(dim=-1)  # Sum over all features except last 2
-        num_active_edges = (active_edges == 1).sum(dim=(1, 2))  # Sum over nodes for each batch item
+        num_active_edges = (active_edges == 1).sum(
+            dim=(1, 2)
+        )  # Sum over nodes for each batch item
         n_nodes = node_padding_mask.sum(dim=1)
 
         # If all the edges are denoised, only allow no-edge predictions
         fully_connected = (num_active_edges // 2) >= (n_nodes - 1)
-        logits_E[fully_connected] = torch.full_like(logits_E[fully_connected], self.neg_infinity)
+        logits_E[fully_connected] = torch.full_like(
+            logits_E[fully_connected], self.neg_infinity
+        )
         logits_E[fully_connected, :, :, -2] = 0  # Allow only no-edge token
 
         # log prob at the mask index = - infinity
@@ -527,7 +567,9 @@ class Diffusion(L.LightningModule):
         # Hard-code the logits for the diagonals, respecting node_padding_mask
         batch_size, n, _, _ = logits_E.shape
         diag_indices = torch.arange(n, device=logits_E.device)
-        diag_values = torch.full((logits_E.shape[-1],), self.neg_infinity, device=logits_E.device)
+        diag_values = torch.full(
+            (logits_E.shape[-1],), self.neg_infinity, device=logits_E.device
+        )
         diag_values[-2] = 0
         diag_values = diag_values.expand(batch_size, n, -1)
         logits_E[:, diag_indices, diag_indices, :] = diag_values
@@ -572,7 +614,9 @@ class Diffusion(L.LightningModule):
 
         # Expand move_chance to match the shape of X and E
         node_move_chance = move_chance.unsqueeze(2).expand(-1, -1, X.shape[2])
-        edge_move_chance = move_chance.unsqueeze(2).unsqueeze(3).expand(-1, -1, -1, E.shape[3])
+        edge_move_chance = (
+            move_chance.unsqueeze(2).unsqueeze(3).expand(-1, -1, -1, E.shape[3])
+        )
 
         # Generate random values for nodes and edges and expand to feature dim
         node_rand = torch.rand(X.shape[0], X.shape[1], device=X.device)
@@ -663,10 +707,14 @@ class Diffusion(L.LightningModule):
         C1.center()
         C1_center_valid_only = C1.get_center(custom_mask=ground_truth_graph_mask)
         gt_mask_expanded = (
-            ground_truth_graph_mask.unsqueeze(-1).expand_as(C0_shifted.atom_coords).bool()
+            ground_truth_graph_mask.unsqueeze(-1)
+            .expand_as(C0_shifted.atom_coords)
+            .bool()
         )
         partial_mask_expanded = (
-            partially_noised_graph_mask.unsqueeze(-1).expand_as(C0_shifted.atom_coords).bool()
+            partially_noised_graph_mask.unsqueeze(-1)
+            .expand_as(C0_shifted.atom_coords)
+            .bool()
         )
         C0_shifted.set_coordinates(
             torch.where(
@@ -677,7 +725,9 @@ class Diffusion(L.LightningModule):
         )
         C0_shifted.set_coordinates(
             torch.where(
-                ~gt_mask_expanded & partial_mask_expanded, C1.atom_coords, C0_shifted.atom_coords
+                ~gt_mask_expanded & partial_mask_expanded,
+                C1.atom_coords,
+                C0_shifted.atom_coords,
             )
         )
         if C0_shifted.has_pharmacophores:
@@ -694,7 +744,9 @@ class Diffusion(L.LightningModule):
         Ct = self.interpolator(C0_shifted.atom_coords, C1.atom_coords, t)
 
         # Wrap back into Coordinates object
-        coords_noised = Coordinates(coordinates=Ct, atom_mask=partially_noised_graph_mask)
+        coords_noised = Coordinates(
+            coordinates=Ct, atom_mask=partially_noised_graph_mask
+        )
         if C0_shifted.has_pharmacophores:
             coords_noised.attach_pharmacophores(
                 pharm_coords=C0_shifted.pharmacophores,
@@ -798,11 +850,14 @@ class Diffusion(L.LightningModule):
                 E_tensor,
                 C_tensor,
                 atom_mask=current_graph.partial_atom_mask.tensor,
+                node_mask=current_graph.node_mask,
                 cond=cond,
                 sampling=True,
             )
 
-            logits_X, logits_E = self._subs_parameterization(current_graph, logits_X, logits_E)
+            logits_X, logits_E = self._subs_parameterization(
+                current_graph, logits_X, logits_E
+            )
             p_x0 = logits_X.exp()
             p_e0 = logits_E.exp()
 
@@ -813,7 +868,7 @@ class Diffusion(L.LightningModule):
             # 4.5: Update objects via setters (triggers cache invalidation)
             current_graph.bb_onehot = X_new
             current_graph.rxn_onehot = E_new
-            current_graph.apply_edge_givens()  # Enforce: diagonals=NO-EDGE, padding=zeros
+            current_graph.apply_edge_givens()  # Enforce: diagonals=NO-EDGE
             current_coords.set_coordinates(C_new, apply_mask=False)
             current_coords.set_mask(current_graph.partial_atom_mask.tensor)
 
@@ -845,15 +900,21 @@ class Diffusion(L.LightningModule):
                 E_tensor,
                 C_tensor,
                 atom_mask=current_graph.partial_atom_mask.tensor,
+                node_mask=current_graph.node_mask,
                 cond=cond,
                 sampling=True,
             )
-            logits_X, logits_E = self._subs_parameterization(current_graph, logits_X, logits_E)
+            logits_X, logits_E = self._subs_parameterization(
+                current_graph, logits_X, logits_E
+            )
             p_x0 = logits_X.exp()
             p_e0 = logits_E.exp()
             # Create final graph from argmax (discrete tokens)
-            final_graph = BBRxnGraph.from_indices(p_x0.argmax(dim=-1), p_e0.argmax(dim=-1))
-            final_graph.node_mask = current_graph.node_mask
+            final_graph = BBRxnGraph.from_indices(
+                p_x0.argmax(dim=-1),
+                p_e0.argmax(dim=-1),
+                node_mask=current_graph.node_mask,
+            )
             final_graph.apply_edge_givens()
             final_coords = Coordinates(
                 coordinates=C_pred, atom_mask=current_graph.partial_atom_mask.tensor
@@ -895,7 +956,9 @@ class Diffusion(L.LightningModule):
             )
         self.backbone.eval()
         self.discrete_noise.eval()
-        samples = self.sample(num_steps=num_steps, test_dataloader=test_dataloader, cond=cond)
+        samples = self.sample(
+            num_steps=num_steps, test_dataloader=test_dataloader, cond=cond
+        )
         if self.ema:
             self.ema.restore(
                 itertools.chain(
@@ -986,7 +1049,9 @@ class Diffusion(L.LightningModule):
             if val_dataloaders is not None:
                 # Can be a single loader or list of loaders
                 val_loader = (
-                    val_dataloaders[0] if isinstance(val_dataloaders, list) else val_dataloaders
+                    val_dataloaders[0]
+                    if isinstance(val_dataloaders, list)
+                    else val_dataloaders
                 )
 
         with torch.no_grad():
@@ -1004,7 +1069,9 @@ class Diffusion(L.LightningModule):
             self.log_dict(metrics, on_epoch=True, prog_bar=False, sync_dist=False)
 
         # Visualizations (rank zero only)
-        run = getattr(self.logger, "experiment", None) or getattr(self.logger, "run", None)
+        run = getattr(self.logger, "experiment", None) or getattr(
+            self.logger, "run", None
+        )
         if run is not None and getattr(self.trainer, "is_global_zero", True):
             log_molecule_images(run, graphs, mols, step=self.global_step)
             log_fragment_histogram(run, graphs, step=self.global_step)
@@ -1035,9 +1102,9 @@ class Diffusion(L.LightningModule):
             return optimizer
 
         if self._lr_scheduler_config.module == "torch.optim.lr_scheduler":
-            scheduler = getattr(torch.optim.lr_scheduler, self._lr_scheduler_config.cls_name)(
-                optimizer, **self._lr_scheduler_config.kwargs
-            )
+            scheduler = getattr(
+                torch.optim.lr_scheduler, self._lr_scheduler_config.cls_name
+            )(optimizer, **self._lr_scheduler_config.kwargs)
         elif self._lr_scheduler_config.module == "transformers":
             import transformers
 
@@ -1047,19 +1114,21 @@ class Diffusion(L.LightningModule):
         else:
             raise ValueError(f"Unknown module: {self._lr_scheduler_config.module}")
 
-        return [optimizer], [{"scheduler": scheduler, "interval": "step", "name": "trainer/lr"}]
+        return [optimizer], [
+            {"scheduler": scheduler, "interval": "step", "name": "trainer/lr"}
+        ]
 
     def on_load_checkpoint(self, checkpoint):
         if self.ema:
             self.ema.load_state_dict(checkpoint["ema"])
         # Copied from:
         # https://github.com/Dao-AILab/flash-attention/blob/main/training/src/datamodules/language_modeling_hf.py#L41
-        self.fast_forward_epochs = checkpoint["loops"]["fit_loop"]["epoch_progress"]["current"][
-            "completed"
-        ]
-        self.fast_forward_batches = checkpoint["loops"]["fit_loop"]["epoch_loop.batch_progress"][
+        self.fast_forward_epochs = checkpoint["loops"]["fit_loop"]["epoch_progress"][
             "current"
         ]["completed"]
+        self.fast_forward_batches = checkpoint["loops"]["fit_loop"][
+            "epoch_loop.batch_progress"
+        ]["current"]["completed"]
 
     def on_save_checkpoint(self, checkpoint):
         if self.ema:

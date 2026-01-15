@@ -9,7 +9,10 @@ class LRScheduler:
     """Wrapper around torch/transformers LR schedulers for gin configuration."""
 
     def __init__(
-        self, cls_name: str, module: str = "torch.optim.lr_scheduler", **kwargs: Dict[str, Any]
+        self,
+        cls_name: str,
+        module: str = "torch.optim.lr_scheduler",
+        **kwargs: Dict[str, Any],
     ):
         self.cls_name = cls_name
         self.module = module
@@ -24,7 +27,9 @@ class LRScheduler:
         elif self.module == "transformers":
             import transformers
 
-            self.lr_scheduler = getattr(transformers, self.cls_name)(optimizer, **self.kwargs)
+            self.lr_scheduler = getattr(transformers, self.cls_name)(
+                optimizer, **self.kwargs
+            )
         else:
             raise ValueError(f"Unknown module: {self.module}")
 

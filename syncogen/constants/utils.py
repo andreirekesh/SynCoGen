@@ -13,7 +13,9 @@ from syncogen.constants.constants import (
 
 def get_partial_maccs_keys(X_indices: torch.Tensor) -> torch.Tensor:
     """Get MACCS keys for a batch of molecules."""
-    maccs_keys = FRAGMENT_MACCS.to(X_indices.device)[X_indices]  # [batch_size, n_fragments, 166]
+    maccs_keys = FRAGMENT_MACCS.to(X_indices.device)[
+        X_indices
+    ]  # [batch_size, n_fragments, 166]
     return maccs_keys
 
 
@@ -45,10 +47,13 @@ def get_partial_bond_features(X_indices, mode="adj"):
 
     # Initialize output adjacency matrix to all masked (onehot index 4)
     if mode == "adj":
-        adj = torch.zeros((batch_size, total_atoms, total_atoms), device=X_indices.device)
+        adj = torch.zeros(
+            (batch_size, total_atoms, total_atoms), device=X_indices.device
+        )
     elif mode == "feats":
         adj = torch.zeros(
-            (batch_size, total_atoms, total_atoms, N_BOND_FEATURES), device=X_indices.device
+            (batch_size, total_atoms, total_atoms, N_BOND_FEATURES),
+            device=X_indices.device,
         )
         adj[..., -1] = 1  # Set is_masked=1 for all entries initially
 
@@ -62,8 +67,12 @@ def get_partial_bond_features(X_indices, mode="adj"):
 
                 # Copy the fragment's adjacency matrix directly
                 if mode == "adj":
-                    adj[b, start_idx:end_idx, start_idx:end_idx] = FRAGMENT_ATOMADJ[frag_idx]
+                    adj[b, start_idx:end_idx, start_idx:end_idx] = FRAGMENT_ATOMADJ[
+                        frag_idx
+                    ]
                 else:  # mode == "feats"
-                    adj[b, start_idx:end_idx, start_idx:end_idx] = FRAGMENT_BONDFEATS[frag_idx]
+                    adj[b, start_idx:end_idx, start_idx:end_idx] = FRAGMENT_BONDFEATS[
+                        frag_idx
+                    ]
 
     return adj

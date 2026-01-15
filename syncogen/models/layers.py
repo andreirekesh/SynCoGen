@@ -14,7 +14,9 @@ class PositionsMLP(nn.Module):
         """
         super().__init__()
         self.eps = eps
-        self.mlp = nn.Sequential(nn.Linear(1, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1))
+        self.mlp = nn.Sequential(
+            nn.Linear(1, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1)
+        )
 
     def forward(self, pos, node_mask):
         """Args:
@@ -62,7 +64,9 @@ class HierarchicalPositionalEmbedding(nn.Module):
     fragments containing atoms.
     """
 
-    def __init__(self, d_model, max_fragments=5, max_atoms_per_fragment=MAX_ATOMS_PER_BB):
+    def __init__(
+        self, d_model, max_fragments=5, max_atoms_per_fragment=MAX_ATOMS_PER_BB
+    ):
         super().__init__()
         self.d_model = d_model
         self.max_fragments = max_fragments
@@ -100,7 +104,10 @@ class HierarchicalPositionalEmbedding(nn.Module):
 
         # If no atom features, return fragment embeddings with zero atom embeddings
         padding = torch.zeros(
-            *frag_pe.shape[:-1], self.atom_dim, device=frag_pe.device, dtype=frag_pe.dtype
+            *frag_pe.shape[:-1],
+            self.atom_dim,
+            device=frag_pe.device,
+            dtype=frag_pe.dtype
         )
 
         if atom_features is None:
@@ -151,7 +158,9 @@ class TimestepEmbedding(nn.Module):
         # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
         half = dim // 2
         freqs = torch.exp(
-            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+            -math.log(max_period)
+            * torch.arange(start=0, end=half, dtype=torch.float32)
+            / half
         ).to(device=t.device)
 
         # Reshape t to (..., 1) and freqs to (1, ..., half)
@@ -161,7 +170,9 @@ class TimestepEmbedding(nn.Module):
         args = t.view(*t_shape).float() * freqs.view(*freqs_shape)
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:
-            embedding = torch.cat([embedding, torch.zeros_like(embedding[..., :1])], dim=-1)
+            embedding = torch.cat(
+                [embedding, torch.zeros_like(embedding[..., :1])], dim=-1
+            )
         return embedding
 
     def forward(self, t):
@@ -205,7 +216,9 @@ class Xtoy(nn.Module):
         m = X.sum(dim=1) / torch.sum(x_mask, dim=1)
         mi = (X + 1e5 * float_imask).min(dim=1)[0]
         ma = (X - 1e5 * float_imask).max(dim=1)[0]
-        std = torch.sum(((X - m[:, None, :]) ** 2) * x_mask, dim=1) / torch.sum(x_mask, dim=1)
+        std = torch.sum(((X - m[:, None, :]) ** 2) * x_mask, dim=1) / torch.sum(
+            x_mask, dim=1
+        )
         z = torch.hstack((m, mi, ma, std))
         out = self.lin(z)
         return out
@@ -257,7 +270,9 @@ class EtoX(nn.Module):
         m = E.sum(dim=2) / torch.sum(e_mask2, dim=2)
         mi = (E + 1e5 * float_imask).min(dim=2)[0]
         ma = (E - 1e5 * float_imask).max(dim=2)[0]
-        std = torch.sum(((E - m[:, :, None, :]) ** 2) * e_mask2, dim=2) / torch.sum(e_mask2, dim=2)
+        std = torch.sum(((E - m[:, :, None, :]) ** 2) * e_mask2, dim=2) / torch.sum(
+            e_mask2, dim=2
+        )
         z = torch.cat((m, mi, ma, std), dim=2)
         out = self.lin(z)
         return out
@@ -284,8 +299,12 @@ class CtoE(nn.Module):
         n = nm // MAX_ATOMS_PER_BB
 
         mask = (c_mask1 * c_mask2).expand(-1, -1, -1, dc)  # bs, nm, nm, dc
-        mask = mask.view(bs, n, MAX_ATOMS_PER_BB, n, MAX_ATOMS_PER_BB, dc)  # bs, n, m, n, m, dc
-        delta1 = delta1.view(bs, n, MAX_ATOMS_PER_BB, n, MAX_ATOMS_PER_BB, dc)  # bs, n, m, n, m, dc
+        mask = mask.view(
+            bs, n, MAX_ATOMS_PER_BB, n, MAX_ATOMS_PER_BB, dc
+        )  # bs, n, m, n, m, dc
+        delta1 = delta1.view(
+            bs, n, MAX_ATOMS_PER_BB, n, MAX_ATOMS_PER_BB, dc
+        )  # bs, n, m, n, m, dc
 
         float_imask = 1 - mask.float()  # bs, n, m, n, m, dc
         divide = torch.sum(mask, dim=(2, 4)) + self.eps  # bs, n, n, dc
@@ -346,7 +365,9 @@ class EtoC(nn.Module):
     def __init__(self, dy, dc):
         super().__init__()
         self.lin = nn.Linear(dy, dc, bias=False)
-        self.pe_m = SinusoidalPositionalEmbedding(d_model=dy, max_len=MAX_ATOMS_PER_BB**2)
+        self.pe_m = SinusoidalPositionalEmbedding(
+            d_model=dy, max_len=MAX_ATOMS_PER_BB**2
+        )
 
     def forward(self, E, e_mask1, e_mask2):
         """Args:
@@ -378,7 +399,9 @@ class EtoC(nn.Module):
         pos = torch.arange(MAX_ATOMS_PER_BB**2, device=E.device).reshape(
             MAX_ATOMS_PER_BB, MAX_ATOMS_PER_BB
         )  # (m, m)
-        pos_emb = self.pe_m(pos).unsqueeze(1).unsqueeze(0).unsqueeze(0)  # (1, 1, m, 1, m, dy)
+        pos_emb = (
+            self.pe_m(pos).unsqueeze(1).unsqueeze(0).unsqueeze(0)
+        )  # (1, 1, m, 1, m, dy)
         E_broadcast = E_broadcast + pos_emb  # (bs, n, m, n, m, dy)
 
         # Combine the broadcast edge features with masks
@@ -434,7 +457,9 @@ class SetNorm(nn.LayerNorm):
         bs, n, d = x.shape
         divide = torch.sum(x_mask, dim=1, keepdim=True) * d  # bs
         means = torch.sum(x * x_mask, dim=[1, 2], keepdim=True) / divide
-        var = torch.sum((x - means) ** 2 * x_mask, dim=[1, 2], keepdim=True) / (divide + self.eps)
+        var = torch.sum((x - means) ** 2 * x_mask, dim=[1, 2], keepdim=True) / (
+            divide + self.eps
+        )
         out = (x - means) / (torch.sqrt(var) + self.eps)
         out = out * self.weights + self.biases
         out = out * x_mask
@@ -455,9 +480,9 @@ class GraphNorm(nn.LayerNorm):
         bs, n, _, d = E.shape
         divide = torch.sum(emask1 * emask2, dim=[1, 2], keepdim=True) * d  # bs
         means = torch.sum(E * emask1 * emask2, dim=[1, 2], keepdim=True) / divide
-        var = torch.sum((E - means) ** 2 * emask1 * emask2, dim=[1, 2], keepdim=True) / (
-            divide + self.eps
-        )
+        var = torch.sum(
+            (E - means) ** 2 * emask1 * emask2, dim=[1, 2], keepdim=True
+        ) / (divide + self.eps)
         out = (E - means) / (torch.sqrt(var) + self.eps)
         out = out * self.weights + self.biases
         out = out * emask1 * emask2

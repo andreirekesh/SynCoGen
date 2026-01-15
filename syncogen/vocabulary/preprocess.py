@@ -130,7 +130,9 @@ def load_templates(path: Path, smarts_column: Optional[str] = None):
                     f"Available columns: {reader.fieldnames}"
                 )
             return [
-                row[smarts_column].strip() for row in reader if row.get(smarts_column, "").strip()
+                row[smarts_column].strip()
+                for row in reader
+                if row.get(smarts_column, "").strip()
             ]
 
     with path.open("r") as f:
@@ -157,7 +159,9 @@ def load_bbs(path: Path, smiles_column: Optional[str] = None):
                     f"Available columns: {reader.fieldnames}"
                 )
             return [
-                row[smiles_column].strip() for row in reader if row.get(smiles_column, "").strip()
+                row[smiles_column].strip()
+                for row in reader
+                if row.get(smiles_column, "").strip()
             ]
 
     with path.open("r") as f:
@@ -280,7 +284,9 @@ def filter_reactions(
         j for j, smarts in enumerate(templates) if reaction_usage.get(smarts, 0) > 0
     ]
     filtered_templates = [templates[j] for j in keep_rxn_indices]
-    filtered_annotations = {smarts: annotated_smarts[smarts] for smarts in filtered_templates}
+    filtered_annotations = {
+        smarts: annotated_smarts[smarts] for smarts in filtered_templates
+    }
     compatibility = compatibility[:, keep_rxn_indices, :]
     return filtered_templates, filtered_annotations, compatibility
 
@@ -364,7 +370,9 @@ def write_vocab_jsons(
 ):
     """Write building_blocks.json and reactions.json."""
     building_blocks_out = {smiles: annotated_bbs.get(smiles, []) for smiles in bbs}
-    (out_dir / "building_blocks.json").write_text(json.dumps(building_blocks_out, indent=2))
+    (out_dir / "building_blocks.json").write_text(
+        json.dumps(building_blocks_out, indent=2)
+    )
 
     reactions_out = {}
     for idx, (smarts, centers_info) in enumerate(annotated_smarts.items()):
@@ -439,7 +447,9 @@ def compute_fragment_features(
         bond_feats = torch.zeros(
             (max_atoms_per_bb, max_atoms_per_bb, n_bond_features), dtype=torch.float32
         )
-        atom_adj = torch.zeros((max_atoms_per_bb, max_atoms_per_bb), dtype=torch.float32)
+        atom_adj = torch.zeros(
+            (max_atoms_per_bb, max_atoms_per_bb), dtype=torch.float32
+        )
         for bond in mol.GetBonds():
             a1 = bond.GetBeginAtomIdx()
             a2 = bond.GetEndAtomIdx()
@@ -581,8 +591,12 @@ def main():
     print("Annotating reactions...")
     # If reactions are provided as CSV, require rxn_smarts_column.
     templates = load_templates(rxn_path, smarts_column=args.rxn_smarts_column)
-    annotated_smarts = {smarts: get_smarts_reaction_centers(smarts) for smarts in templates}
-    (out_dir / "templates_annotated.json").write_text(json.dumps(annotated_smarts, indent=2))
+    annotated_smarts = {
+        smarts: get_smarts_reaction_centers(smarts) for smarts in templates
+    }
+    (out_dir / "templates_annotated.json").write_text(
+        json.dumps(annotated_smarts, indent=2)
+    )
     print(f"Annotated {len(annotated_smarts)} reactions")
 
     print("Loading building blocks...")
@@ -603,13 +617,19 @@ def main():
         )
         print(f"Remaining building blocks after property filtering: {len(bbs)}")
     else:
-        print("Skipping property-based filtering of building blocks (--no_property_filtering set)")
+        print(
+            "Skipping property-based filtering of building blocks (--no_property_filtering set)"
+        )
 
     if not args.no_substructure_filtering:
         bbs = filter_bbs_unwanted_substructures(bbs)
-        print(f"Remaining building blocks after unwanted substructure filtering: {len(bbs)}")
+        print(
+            f"Remaining building blocks after unwanted substructure filtering: {len(bbs)}"
+        )
     else:
-        print("Skipping unwanted substructure filtering (--no_substructure_filtering set)")
+        print(
+            "Skipping unwanted substructure filtering (--no_substructure_filtering set)"
+        )
 
     # Optionally apply diverse subset selection after filtering but before
     # compatibility computations.
@@ -649,7 +669,9 @@ def main():
         keep_incompatible=args.keep_incompatible,
     )
     torch.save(compatibility, out_dir / "compatibility.pt")
-    (out_dir / "templates_annotated.json").write_text(json.dumps(annotated_smarts, indent=2))
+    (out_dir / "templates_annotated.json").write_text(
+        json.dumps(annotated_smarts, indent=2)
+    )
 
     print("Writing building_blocks.json and reactions.json...")
     building_blocks_out = write_vocab_jsons(
