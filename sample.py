@@ -195,7 +195,7 @@ def sample(
             total_valid += 1
 
             atom_coords = coords_i.atom_coords.reshape(-1, 3)
-            atom_mask = graph_i.ground_truth_atom_mask.tensor.reshape(-1).bool()
+            atom_mask = graph_i.ground_truth_atom_mask.reshape(-1).bool()
             valid_coords = atom_coords[: atom_mask.shape[0], :][atom_mask]
             mol = set_mol_coordinates(mol, valid_coords.cpu())
 

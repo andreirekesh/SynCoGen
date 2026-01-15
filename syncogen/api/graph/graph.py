@@ -31,7 +31,6 @@ from syncogen.constants.constants import (
     N_BUILDING_BLOCKS,
     COMPATIBILITY,
 )
-from syncogen.api.atomics.mask import AtomMask
 
 
 class BBRxnGraph:
@@ -415,7 +414,7 @@ class BBRxnGraph:
         )
 
     @property
-    def ground_truth_atom_mask(self) -> AtomMask:
+    def ground_truth_atom_mask(self) -> torch.Tensor:
         """Ground-truth valid-atom mask (True = valid, False = removed/padded).
 
         Shape: [n_nodes, MAX_ATOMS_PER_BB] for unbatched, or batched accordingly.
@@ -456,7 +455,7 @@ class BBRxnGraph:
                     mask[b, pad_nodes] = False
 
             flat = mask.reshape(self.batch_size, -1)
-            return AtomMask(flat.long(), is_batched=True)
+            return flat.long()
 
         # Unbatched
         n_bbs = self._bb_onehot.shape[0]
@@ -485,17 +484,17 @@ class BBRxnGraph:
             mask[pad_nodes] = False
 
         flat = mask.reshape(-1)
-        return AtomMask(flat.long())
+        return flat.long()
 
     @property
-    def partial_atom_mask(self) -> AtomMask:
+    def partial_atom_mask(self) -> torch.Tensor:
         """Partial validity mask for atoms per building block.
 
         True indicates valid atom positions for current graph state.
         - For non-mask building blocks: exactly num_atoms are True
         - For mask building blocks: all MAX_ATOMS_PER_BB positions are True
 
-        Shape: [n_nodes, MAX_ATOMS_PER_BB]
+        Shape: [n_nodes, MAX_ATOMS_PER_BB] for unbatched, or batched accordingly.
         """
         if self.is_batched:
             n_bbs = self._bb_onehot.shape[1]
@@ -515,7 +514,7 @@ class BBRxnGraph:
                 pad_nodes = self._node_mask[b].to(dtype=torch.bool) == 0
                 if pad_nodes.any():
                     valid[b, pad_nodes] = False
-            return AtomMask(valid.reshape(self.batch_size, -1).long(), is_batched=True)
+            return valid.reshape(self.batch_size, -1).long()
 
         n_bbs = self._bb_onehot.shape[0]
         valid = torch.zeros(
@@ -529,7 +528,7 @@ class BBRxnGraph:
         pad_nodes = self._node_mask.to(dtype=torch.bool) == 0
         if pad_nodes.any():
             valid[pad_nodes] = False
-        return AtomMask(valid.reshape(-1).long())
+        return valid.reshape(-1).long()
 
     # ============ RDKit Conversion ============
 
@@ -647,7 +646,7 @@ class BBRxnGraph:
 
         # Get the atom mask to know which atoms are valid (not dropped/padded)
         atom_mask = self.ground_truth_atom_mask
-        flat_mask = atom_mask.tensor.reshape(-1).bool()  # True = valid atom
+        flat_mask = atom_mask.reshape(-1).bool()  # True = valid atom
 
         bonds = []
         n_bbs = len(self.building_blocks)
