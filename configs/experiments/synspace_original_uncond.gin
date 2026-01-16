@@ -24,7 +24,7 @@ SyncogenDataManager.conformers_path = "/hpf/projects/mkoziarski/arekesh/data/all
 SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/pharmacophores.lmdb"
 
 # Trainer
-Trainer.accumulate_grad_batches = 8
+Trainer.accumulate_grad_batches = 4
 Trainer.logger = @WandbLogger()
 Trainer.callbacks = [@ModelCheckpoint()]
 Trainer.precision = "32"
@@ -39,13 +39,14 @@ SyncogenDataManager.batch_size = 64
 SyncogenDataManager.eval_batch_size = 64
 SyncogenDataManager.load_pharmacophores = False
 SyncogenDataManager.load_bonds = True
+SyncogenDataManager.sample_conformer = True
 
 # Optimizer
 Optimizer.lr = 3e-4
-Optimizer.weight_decay = 0.01
+Optimizer.weight_decay = 1e-5
 
 # Scheduler
-LRScheduler.num_warmup_steps = 1000
+LRScheduler.num_warmup_steps = 2500
 
 # Diffusion
 Diffusion.discrete_noise = @LinearNoise()
@@ -53,7 +54,7 @@ Diffusion.num_sample_steps = 100
 Diffusion.train_rot_align = True
 Diffusion.self_conditioning = True
 Diffusion.pharm_subset = 7
-Diffusion.losses = [@NLLLoss(), @MSELoss(), @BondLengthLoss(), @PairwiseDistanceLoss(), @SmoothLDDTLoss()]
+Diffusion.losses = [@NLLLoss(), @MSELoss(), @PairwiseDistanceLoss()]
 Diffusion.generate_eval_samples = True
 Diffusion.sample_every_n_epochs = 1
 Diffusion.discrete_strategy = @MDLM()
@@ -75,24 +76,12 @@ NLLLoss.coef = 1.0
 MSELoss.coef = 1.0
 MSELoss.time_weighted = True
 
-# Bond length loss
-BondLengthLoss.coef = 2.0
-BondLengthLoss.sqrd = True
-BondLengthLoss.time_weighted = True
-BondLengthLoss.t_threshold = 0.25
-
 # Pairwise distance loss
-PairwiseDistanceLoss.coef = 0.4
-PairwiseDistanceLoss.distance_threshold = 5.0
+PairwiseDistanceLoss.coef = 1.0
+PairwiseDistanceLoss.distance_threshold = 3.0
 PairwiseDistanceLoss.sqrd = True
 PairwiseDistanceLoss.time_weighted = True
 PairwiseDistanceLoss.t_threshold = 0.25
-
-# Smooth LDDT loss
-SmoothLDDTLoss.coef = 0.4
-SmoothLDDTLoss.time_weighted = True 
-SmoothLDDTLoss.sqrd = True
-SmoothLDDTLoss.t_threshold = 0.25
 
 # Inference Annealing 
 EulerIntegrator.inference_annealing = True

@@ -6,6 +6,8 @@ from syncogen.api.ops.coordinates_ops import (
     random_translate as ops_random_translate,
     kabsch_align as ops_kabsch,
 )
+
+
 class Coordinates:
     """Coordinates class for handling molecular coordinates.
 
@@ -50,14 +52,14 @@ class Coordinates:
         self.tensor = coordinates
         self.is_batched = is_batched
 
-        self.atom_mask = atom_mask.to(device=coordinates.device, dtype=coordinates.dtype)
+        self.atom_mask = atom_mask.to(
+            device=coordinates.device, dtype=coordinates.dtype
+        )
 
         if self.is_batched:
             self.batch_size = coordinates.shape[0]
             self.max_atoms = coordinates.shape[1]
-            self.n_atoms = (
-                self.atom_mask.reshape(self.batch_size, -1).sum(dim=1).long()
-            )
+            self.n_atoms = self.atom_mask.reshape(self.batch_size, -1).sum(dim=1).long()
         else:
             self.max_atoms = coordinates.shape[0]
             self.n_atoms = int(self.atom_mask.reshape(-1).sum().item())
@@ -314,9 +316,7 @@ class Coordinates:
     def random_translate(self, scale: float = 1.0):
         """Apply random translation to coordinates (and pharmacophores if attached)."""
         if not self.has_pharmacophores:
-            self.tensor = ops_random_translate(
-                self.tensor, self.atom_mask, scale
-            )
+            self.tensor = ops_random_translate(self.tensor, self.atom_mask, scale)
             return self
         coords_cat = torch.cat(
             [self.tensor, self.pharm_coords], dim=1 if self.is_batched else 0
@@ -393,15 +393,14 @@ class Coordinates:
             assert hasattr(
                 self, "batch_size"
             ), "batch_size must be set for batched Coordinates"
-            self.n_atoms = (
-                self.atom_mask.reshape(self.batch_size, -1).sum(dim=1).long()
-            )
+            self.n_atoms = self.atom_mask.reshape(self.batch_size, -1).sum(dim=1).long()
         else:
             self.n_atoms = int(self.atom_mask.reshape(-1).sum().item())
         # Maintain invariant: masked positions are zero
-        self.tensor = self.tensor * self.atom_mask.unsqueeze(-1).to(
-            self.tensor.dtype
-        )
+        if apply_mask:
+            self.tensor = self.tensor * self.atom_mask.unsqueeze(-1).to(
+                self.tensor.dtype
+            )
         return self
 
     def set_coordinates(self, coordinates: torch.Tensor, apply_mask: bool = True):
@@ -492,9 +491,7 @@ class Coordinates:
             raise TypeError("Indexing is only valid for batched Coordinates")
         coords = Coordinates(
             coordinates=self.tensor[idx],
-            atom_mask=(
-                self.atom_mask[idx] if self.atom_mask is not None else None
-            ),
+            atom_mask=(self.atom_mask[idx] if self.atom_mask is not None else None),
             is_batched=False,
         )
         if self.has_pharmacophores:

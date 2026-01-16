@@ -1,4 +1,4 @@
-# SynCoGen (Original Dataset) Pharmacophore-Conditioned Generation Experiment Configuration
+# SynCoGen (Original Dataset) Unconditional Generation Experiment Configuration
 
 include "configs/training/base.gin"
 include "configs/noise/linear.gin"
@@ -16,7 +16,7 @@ include "configs/logging/metrics/default.gin"
 include "configs/sampling/integrators/euler.gin"
 
 # Checkpointing
-ModelCheckpoint.dirpath = "checkpoints/synspace_original_cond"
+ModelCheckpoint.dirpath = "checkpoints/synspace_original_uncond"
 
 # Data paths
 SyncogenDataManager.graphs_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/dataset_list_full.pt"
@@ -30,14 +30,14 @@ Trainer.callbacks = [@ModelCheckpoint()]
 Trainer.precision = "32"
 
 # Logger
-WandbLogger.name = "synspace_original_cond"
+WandbLogger.name = "synspace_original_uncond"
 # WandbLogger.mode = "disabled"
 
 
 # Data
 SyncogenDataManager.batch_size = 64
 SyncogenDataManager.eval_batch_size = 64
-SyncogenDataManager.load_pharmacophores = True
+SyncogenDataManager.load_pharmacophores = False
 SyncogenDataManager.load_bonds = True
 SyncogenDataManager.sample_conformer = True
 
@@ -54,12 +54,13 @@ Diffusion.num_sample_steps = 100
 Diffusion.train_rot_align = True
 Diffusion.self_conditioning = True
 Diffusion.pharm_subset = 7
-Diffusion.losses = [@NLLLoss(), @MSELoss(), @BondLengthLoss(), @PairwiseDistanceLoss()]
+Diffusion.losses = [@NLLLoss(), @MSELoss(), @PairwiseDistanceLoss(), @BondLengthLoss(), @SmoothLDDTLoss()]
 Diffusion.generate_eval_samples = True
 Diffusion.sample_every_n_epochs = 1
 Diffusion.discrete_strategy = @MDLM()
-Diffusion.backbone = "semla_pharm"
-Diffusion.scale_noise = False
+Diffusion.integrator = @EulerIntegrator()
+Diffusion.backbone = "semla"
+Diffusion.scale_noise = True
 Diffusion.scale_noise_factor = 0.2
 
 # Noise
@@ -76,7 +77,7 @@ MSELoss.coef = 1.0
 MSELoss.time_weighted = True
 
 # Bond length loss
-BondLengthLoss.coef = 2.0
+BondLengthLoss.coef = 0.2
 BondLengthLoss.sqrd = True
 BondLengthLoss.time_weighted = True
 BondLengthLoss.t_threshold = 0.25

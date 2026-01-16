@@ -104,6 +104,14 @@ class Diffusion(L.LightningModule):
         self.train_rot_align = train_rot_align
         self.self_conditioning = self_conditioning
         self.time_conditioning = time_conditioning
+
+        # Auto-switch to semla_pharm if pharmacophores are loaded but backbone is semla
+        if data_manager.load_pharmacophores and backbone == "semla":
+            print(
+                "Auto-switching to semla_pharm because pharmacophores are loaded but backbone is semla"
+            )
+            backbone = "semla_pharm"
+
         self.backbone = get_backbone(backbone, self_conditioning, pharm_subset)
         self.losses = LossList(losses)
         self.metrics = MetricsList(metrics)
@@ -169,6 +177,9 @@ class Diffusion(L.LightningModule):
         # Edge feature dimension (reactions * centers * centers + 2 for no-edge and mask tokens)
         self.n_edge_features = N_REACTIONS * N_CENTERS * N_CENTERS + 2
 
+        # Configure loss normalization
+        self._configure_loss_normalization()
+
     @property
     def batch_size(self) -> int:
         """Training batch size."""
@@ -179,8 +190,16 @@ class Diffusion(L.LightningModule):
         """Evaluation/validation batch size."""
         return self.data_manager.eval_batch_size
 
-    def forward(self, *args, **kwargs):
-        return self.backbone(*args, **kwargs)
+    def _configure_loss_normalization(self):
+        """Configure loss normalization based on augmentations."""
+        is_normalized = "normalize" in self.augmentations
+        if is_normalized:
+            print(
+                "Normalization specified. Adjusting loss normalization thresholds accordingly."
+            )
+        for loss in self.losses.losses:
+            if hasattr(loss, "normalize_threshold"):
+                loss.normalize_threshold = is_normalized
 
     def _apply_scale_noise(self, coords: Coordinates) -> Coordinates:
         """Scale coordinates by log(num_atoms) * scale_noise_factor."""
@@ -192,7 +211,7 @@ class Diffusion(L.LightningModule):
             else atom_mask.reshape(1, -1)
         )
         num_atoms = mask_flat.sum(dim=-1)
-        scale = torch.log(num_atoms + 1e-8).view(-1, 1, 1) * self.scale_noise_factor
+        scale = torch.log(num_atoms).view(-1, 1, 1) * self.scale_noise_factor
         coords.set_coordinates(coords_tensor * scale)
         return coords
 
@@ -231,7 +250,7 @@ class Diffusion(L.LightningModule):
         # 1.4: Build coords object
         ground_truth_coords = Coordinates(
             coordinates=C_dense.reshape(C_dense.shape[0], -1, 3),
-            atom_mask=ground_truth_graph_mask
+            atom_mask=ground_truth_graph_mask,
         )
 
         # 1.5: Append dense bonds data
@@ -282,6 +301,7 @@ class Diffusion(L.LightningModule):
                 ground_truth_coords.random_rotate()
             elif augmentation == "translate":
                 ground_truth_coords.random_translate()
+        ground_truth_coords.apply_mask(ground_truth_graph_mask)
 
         # STEP 3: Noise the training batch
         # 3.1: Sample a noise level t
@@ -291,7 +311,6 @@ class Diffusion(L.LightningModule):
         # 3.2: Noise the training batch
         discrete_sigma, discrete_dsigma = self.discrete_noise(t)
         graph_noised = self._noise_discrete(ground_truth_graph, discrete_sigma)
-        graph_noised.apply_edge_givens()  # Enforce: diagonals=NO-EDGE, padding=zeros
         partially_noised_graph_mask = graph_noised.partial_atom_mask
         atom_mask = graph_noised.partial_atom_mask
 
@@ -347,12 +366,19 @@ class Diffusion(L.LightningModule):
         sigma_factor = discrete_dsigma / torch.expm1(discrete_sigma)
 
         # Compute losses via LossList
-        coords_pred = Coordinates(coordinates=C0_hat, atom_mask=ground_truth_graph_mask)
-        coords_pred.center()
+        coords_pred = Coordinates(
+            coordinates=C0_hat, atom_mask=partially_noised_graph_mask
+        )
+        # To be honest I have no idea why this works better than
+        # centering by the partial mask, which is the logical choice, but somehow it does.
+        coords_pred.center(custom_mask=ground_truth_graph_mask)
 
         graph_losses = self.losses.compute_graph(
             log_p_theta_X, log_p_theta_E, ground_truth_graph.node_mask, sigma_factor
         )
+
+        # Ground truth uses ground_truth_graph_mask (for bond losses like pairwise distance - only real atoms)
+        C0_shifted.set_mask(ground_truth_graph_mask, apply_mask=False)
         coords_losses = self.losses.compute_coords(coords_pred, C0_shifted, t)
 
         # Combine and compute total
@@ -603,42 +629,24 @@ class Diffusion(L.LightningModule):
         return t
 
     def _noise_discrete(self, graph_batch: BBRxnGraph, discrete_sigma: torch.Tensor):
-        """Computes the noisy samples Xt and Et.
-
-        Only noises valid (non-padding) positions. Padding stays as zeros.
-        The original node_mask is preserved in the returned graph.
-        """
         X, E = graph_batch.bb_onehot, graph_batch.rxn_onehot
-        node_mask = graph_batch.node_mask  # Preserve original mask
-        move_chance = 1 - torch.exp(-discrete_sigma[:, None])
+        node_mask = graph_batch.node_mask
 
-        # Expand move_chance to match the shape of X and E
+        # Single random value per node/edge expanded to feature dim
+        move_chance = 1 - torch.exp(-discrete_sigma[:, None])
         node_move_chance = move_chance.unsqueeze(2).expand(-1, -1, X.shape[2])
         edge_move_chance = (
             move_chance.unsqueeze(2).unsqueeze(3).expand(-1, -1, -1, E.shape[3])
         )
 
-        # Generate random values for nodes and edges and expand to feature dim
+        # Generate random values for nodes and edges
         node_rand = torch.rand(X.shape[0], X.shape[1], device=X.device)
         edge_rand = torch.rand(E.shape[0], E.shape[1], E.shape[2], device=E.device)
+        node_rand = node_rand.unsqueeze(-1).expand_as(X)
 
-        # Only noise valid positions (padding should stay as zeros)
-        node_rand = torch.where(
-            node_mask.unsqueeze(-1),
-            node_rand.unsqueeze(-1),
-            torch.ones_like(node_rand.unsqueeze(-1)),
-        )
-        node_rand = node_rand.expand_as(X)
-
-        # Make edge_rand symmetric by averaging with its transpose, respecting edge mask
-        edge_mask = node_mask.unsqueeze(1) & node_mask.unsqueeze(2)  # Valid edges
+        # Make edge_rand symmetric by averaging with its transpose
         edge_rand = 0.5 * (edge_rand + edge_rand.transpose(1, 2))
-        edge_rand = torch.where(
-            edge_mask.unsqueeze(-1),
-            edge_rand.unsqueeze(-1),
-            torch.ones_like(edge_rand.unsqueeze(-1)),
-        )
-        edge_rand = edge_rand.expand_as(E)
+        edge_rand = edge_rand.unsqueeze(-1).expand_as(E)
 
         # Generate random tensors and compare with expanded move_chance
         node_move_indices = node_rand < node_move_chance
@@ -650,7 +658,7 @@ class Diffusion(L.LightningModule):
         mask_onehot_E = torch.zeros_like(E)
         mask_onehot_E[..., -1] = 1  # Set last feature to 1
 
-        # Apply masking (padding stays zeros because node_move_indices is False there)
+        # Apply masking
         Xt = torch.where(node_move_indices, mask_onehot_X, X)
         Et = torch.where(edge_move_indices, mask_onehot_E, E)
 
@@ -812,7 +820,7 @@ class Diffusion(L.LightningModule):
                 pharm_coords=pharm_pos, pharm_padding_mask=pharm_padding_mask
             )
 
-        current_coords.center()  # Center initial random coords like old _sample_coord_prior
+        current_coords.center()  # Center initial random coords
 
         # 3. Initialize self-conditioning tensors if applicable
         if self.self_conditioning:

@@ -72,7 +72,7 @@ MSELoss.coef = 1.0
 MSELoss.time_weighted = True
 
 # Bond length loss
-BondLengthLoss.coef = 2.0
+BondLengthLoss.coef = 0.2
 BondLengthLoss.sqrd = True
 BondLengthLoss.time_weighted = True
 BondLengthLoss.t_threshold = 0.25

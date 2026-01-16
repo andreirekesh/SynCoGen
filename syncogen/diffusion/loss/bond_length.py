@@ -83,9 +83,9 @@ class BondLengthLoss(LossBase):
         return loss_per_graph
 
     def forward(self, pred, target, t: torch.Tensor = None) -> torch.Tensor:
-        """Compute loss -> optional time weight -> coef."""
+        """Compute loss -> optional time weight -> threshold -> coef."""
         loss = self.compute_loss(pred, target)  # [B]
-        loss = self.apply_t_threshold(loss, t)
         if t is not None:
             loss = self.apply_time_weight(loss, t.reshape(-1, 1)).squeeze(-1)
+        loss = self.apply_t_threshold(loss, t)
         return self.apply_coef(loss.mean())
