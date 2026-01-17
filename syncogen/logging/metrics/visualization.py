@@ -18,7 +18,9 @@ def log_molecule_images(
     prefix: str = "molecule_images",
 ) -> None:
     """Log a few RDKit molecule images to wandb."""
-    for i, mol in enumerate(mols[:max_mols]):
+    logged = 0
+    used_indices = []
+    for i, mol in enumerate(mols):
         if mol is None:
             continue
         try:
@@ -32,8 +34,12 @@ def log_molecule_images(
                     )
                 }
             )
+            logged += 1
+            used_indices.append(i)
         except Exception:
             continue
+        if logged >= max_mols:
+            break
 
 
 def log_fragment_histogram(
