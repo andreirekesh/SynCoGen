@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import os
 import random
@@ -9,7 +11,6 @@ import networkx as nx
 import torch
 from tqdm import tqdm
 from torch_geometric.data import Data
-from typing import List
 from rdkit import Chem
 from rdkit.Chem import Descriptors, QED, Lipinski
 import numpy as np
@@ -17,19 +18,9 @@ from rdkit import RDLogger
 
 
 # Add syncogen to path for testing
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from syncogen.api.rdkit.assembly import RDKitMoleculeAssembly
-from syncogen.utils.rdkit import is_valid_smiles
-from syncogen.api.graph.graph import BBRxnGraph
-from syncogen.constants.constants import (
-    BUILDING_BLOCKS,
-    BUILDING_BLOCKS_SMI_TO_IDX,
-    N_BUILDING_BLOCKS,
-    N_REACTIONS,
-    N_CENTERS,
-)
-from syncogen.utils.rdkit import get_lipinski_descriptors
+from syncogen.constants.constants import load_vocabulary
 
 
 def lipinski_mask(
@@ -59,7 +50,7 @@ def lipinski_mask(
 
 
 def enumerate_possible_actions(
-    molecule: RDKitMoleculeAssembly,
+    molecule: "RDKitMoleculeAssembly",
     comp_r1: torch.Tensor,
     comp_r2: torch.Tensor,
     bb_descriptors: List[dict],
@@ -77,7 +68,9 @@ def enumerate_possible_actions(
             max_mol_hbd,
             max_mol_hba,
         )
-        valid_indices = [i for i in range(N_BUILDING_BLOCKS) if lipinski_valid[i]]
+        valid_indices = [
+            i for i in range(constants.N_BUILDING_BLOCKS) if lipinski_valid[i]
+        ]
 
         if sample_by_inverse_molwt:
             return [(valid_indices, [bb_descriptors[i]["MW"] for i in valid_indices])]
@@ -126,7 +119,7 @@ def enumerate_possible_actions(
     for idx, (frag_order, frag_smiles, center_availability) in enumerate(
         frags_and_availability
     ):
-        frag_idx = BUILDING_BLOCKS_SMI_TO_IDX[frag_smiles]["index"]
+        frag_idx = constants.BUILDING_BLOCKS_SMI_TO_IDX[frag_smiles]["index"]
         frag_molwt = descriptors_frag[idx]["MW"]
 
         for cidx, is_open in enumerate(center_availability):
@@ -179,12 +172,12 @@ def sample_random_molecules(
 
     # Pre-compute BB descriptors once
     bb_descriptors = get_lipinski_descriptors(
-        [Chem.MolFromSmiles(bb_smiles) for bb_smiles in BUILDING_BLOCKS]
+        [Chem.MolFromSmiles(bb_smiles) for bb_smiles in constants.BUILDING_BLOCKS]
     )
 
     def dfs(
-        mfg: RDKitMoleculeAssembly, target_length: int, actions_taken=None
-    ) -> Tuple[List, RDKitMoleculeAssembly]:
+        mfg: "RDKitMoleculeAssembly", target_length: int, actions_taken=None
+    ) -> Tuple[List, "RDKitMoleculeAssembly"]:
         if actions_taken is None:
             actions_taken = []
 
@@ -334,10 +327,10 @@ if __name__ == "__main__":
         "--save_graphs", action="store_true", help="Save output as numpy arrays"
     )
     parser.add_argument(
-        "--output_dir",
+        "--output_path",
         type=str,
-        default="data/molecule_graphs",
-        help="Directory to save molecules",
+        default="data/molecule_graphs/dataset_list_full.pt",
+        help="Path to save the output .pt file",
     )
     parser.add_argument(
         "--seed", type=int, default=None, help="Random seed for reproducibility"
@@ -385,27 +378,34 @@ if __name__ == "__main__":
         help="Run XTB optimization on molecules and save conformers",
     )
 
-    # Path to compatibility tensor
+    # Path to vocabulary directory
     parser.add_argument(
-        "--compat_path",
+        "--vocab_dir",
         type=str,
-        default="vocabulary/compatibility.pt",
-        help="Path to compact (n_bbs x n_rxns x n_centers) compatibility tensor",
+        required=True,
+        help="Path to vocabulary directory containing building_blocks.json, reactions.json, compatibility.pt, etc.",
     )
 
     args = parser.parse_args()
 
-    # Make output dirs if needed
     if args.save_graphs:
-        os.makedirs(args.output_dir, exist_ok=True)
+        output_path = Path(args.output_path)
+        if output_path.suffix != ".pt":
+            raise ValueError("output_path must be a .pt file")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
     if args.save_conformers:
         os.makedirs(args.conformer_dir, exist_ok=True)
 
-    # Load compatibilities and decode roles
-    compatibility = torch.load(args.compat_path)
-    compatibility = compatibility[:N_BUILDING_BLOCKS, :N_REACTIONS, :N_CENTERS].to(
-        torch.int64
-    )
+    # Load vocabulary and update module-level constants
+    load_vocabulary(Path(args.vocab_dir))
+    import syncogen.constants.constants as constants
+    from syncogen.api.rdkit.assembly import RDKitMoleculeAssembly
+    from syncogen.utils.rdkit import is_valid_smiles
+    from syncogen.api.graph.graph import BBRxnGraph
+    from syncogen.utils.rdkit import get_lipinski_descriptors
+
+    # Extract compatibility tensor and decode roles
+    compatibility = constants.COMPATIBILITY.to(torch.int64)
     comp_r1 = (compatibility & 1) != 0  # (n_bbs, n_rxns, n_centers)
     comp_r2 = (compatibility & 2) != 0  # (n_bbs, n_rxns, n_centers)
 
@@ -426,7 +426,6 @@ if __name__ == "__main__":
 
     for molecule in molecules:
         bbs_mol = list(torch.argmax(molecule.x, dim=-1).numpy())
-        print(molecule.smiles)
         used_bbs.update(bbs_mol)
 
         # Calculate molecular properties
@@ -463,14 +462,9 @@ if __name__ == "__main__":
         print(
             f"Average QED Score: {sum(lipinski_stats['qed'])/len(lipinski_stats['qed']):.4f}"
         )
-    #     print(torch.argmax(molecule.x, dim=-1))
-    # print(len(used_bbs))
-    # print("UNUSED: ")
-    # print([bb_idx for bb_idx in range(N_BUILDING_BLOCKS) if bb_idx not in used_bbs])
 
     if args.save_graphs:
-        out_path = os.path.join(args.output_dir, "dataset_list_full.pt")
-        torch.save(molecules, out_path)
-        print(f"Saved {len(molecules)} molecules to {out_path}")
+        torch.save(molecules, args.output_path)
+        print(f"Saved {len(molecules)} molecules to {args.output_path}")
     else:
         print(f"Generated {len(molecules)} molecules")
