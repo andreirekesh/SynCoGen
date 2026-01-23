@@ -21,7 +21,7 @@ ModelCheckpoint.dirpath = "checkpoints/synspace_original_uncond"
 # Data paths
 SyncogenDataManager.graphs_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/dataset_list_full.pt"
 SyncogenDataManager.conformers_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/mol2s.lmdb"
-SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/pharmacophores.lmdb"
+SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/pharmacophores.lmdb"
 
 # Trainer
 Trainer.accumulate_grad_batches = 4
@@ -54,7 +54,7 @@ Diffusion.num_sample_steps = 100
 Diffusion.train_rot_align = True
 Diffusion.self_conditioning = True
 Diffusion.pharm_subset = 7
-Diffusion.losses = [@NLLLoss(), @MSELoss(), @PairwiseDistanceLoss()]
+Diffusion.losses = [@NLLLoss(), @MSELoss(), @PairwiseDistanceLoss(), @BondLengthLoss(), @SmoothLDDTLoss()]
 Diffusion.generate_eval_samples = True
 Diffusion.sample_every_n_epochs = 1
 Diffusion.discrete_strategy = @MDLM()
@@ -76,12 +76,24 @@ NLLLoss.coef = 1.0
 MSELoss.coef = 1.0
 MSELoss.time_weighted = True
 
+# Bond length loss
+BondLengthLoss.coef = 0.2
+BondLengthLoss.sqrd = True
+BondLengthLoss.time_weighted = True
+BondLengthLoss.t_threshold = 0.25
+
 # Pairwise distance loss
-PairwiseDistanceLoss.coef = 1.0
-PairwiseDistanceLoss.distance_threshold = 3.0
+PairwiseDistanceLoss.coef = 0.4
+PairwiseDistanceLoss.distance_threshold = 5.0
 PairwiseDistanceLoss.sqrd = True
 PairwiseDistanceLoss.time_weighted = True
 PairwiseDistanceLoss.t_threshold = 0.25
+
+# Smooth LDDT loss
+SmoothLDDTLoss.coef = 0.4
+SmoothLDDTLoss.time_weighted = True 
+SmoothLDDTLoss.sqrd = True
+SmoothLDDTLoss.t_threshold = 0.25
 
 # Inference Annealing 
 EulerIntegrator.inference_annealing = True
