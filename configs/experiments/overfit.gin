@@ -17,7 +17,7 @@ include "configs/logging/metrics/default.gin"
 # Data paths
 SyncogenDataManager.graphs_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/dataset_list_full.pt"
 SyncogenDataManager.conformers_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/mol2s.lmdb"
-SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/pharmacophores.lmdb"
+SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/pharmacophores.lmdb"
 
 # Trainer
 Trainer.accumulate_grad_batches = 1
@@ -72,7 +72,7 @@ MSELoss.coef = 1.0
 MSELoss.time_weighted = True
 
 # Bond length loss
-BondLengthLoss.coef = 2.0
+BondLengthLoss.coef = 0.2
 BondLengthLoss.sqrd = True
 BondLengthLoss.time_weighted = True
 BondLengthLoss.t_threshold = 0.25

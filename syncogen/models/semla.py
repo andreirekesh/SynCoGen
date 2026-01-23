@@ -960,6 +960,7 @@ class SemlaGenerator(nn.Module):
         n_fragments = frag_mask.sum(dim=-1)
 
         X_indices = X.argmax(dim=-1)
+        C = C * atom_mask.unsqueeze(-1)
 
         edge_feats = torch.zeros(
             (bs, n * MAX_ATOMS_PER_BB, n * MAX_ATOMS_PER_BB, 5), device=X.device

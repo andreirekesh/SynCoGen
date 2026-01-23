@@ -119,25 +119,25 @@ def kabsch_align(
     src_c = src - src_cent
 
     # 2. Covariance
-    cov = torch.einsum("bij,bik->bjk", (wexp * ref_c), src_c)
+    # H = src_centered^T @ ref_centered (to align src to ref)
+    cov = torch.einsum("bij,bik->bjk", (wexp * src_c), ref_c)
 
     # 3. SVD
     U, S, Vh = torch.linalg.svd(cov, full_matrices=False)
     V = Vh.mH
 
     # 4. Rotation + reflection correction
-    R = torch.einsum("bij,bjk->bik", V, U.mH)
+    R = torch.einsum("bij,bkj->bik", U, V)
     detR = torch.det(R)
     F = (
         torch.eye(3, dtype=torch.float32, device=cov.device)
         .unsqueeze(0)
         .repeat(cov.shape[0], 1, 1)
     )
-    F[:, -1, -1] = torch.where(detR < 0, -1.0, 1.0)
-    R = torch.einsum("bij,bjk,bkl->bil", V, F, U.mH)
+    F[:, -1, -1] = detR
+    R = torch.einsum("bij,bjk,blk->bil", U, F, V)
 
     # 5. Apply rotation + translation
     aligned = (src_c @ R) + ref_cent
-    out = aligned * m.unsqueeze(-1) + src * (1 - m).unsqueeze(-1)
-    out = out.to(orig_dtype)
-    return out.squeeze(0) if single_input else out
+    aligned = aligned.to(orig_dtype)
+    return aligned.squeeze(0) if single_input else aligned

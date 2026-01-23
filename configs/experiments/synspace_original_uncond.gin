@@ -21,10 +21,10 @@ ModelCheckpoint.dirpath = "checkpoints/synspace_original_uncond"
 # Data paths
 SyncogenDataManager.graphs_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/dataset_list_full.pt"
 SyncogenDataManager.conformers_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/mol2s.lmdb"
-SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/pharmacophores.lmdb"
+SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/pharmacophores.lmdb"
 
 # Trainer
-Trainer.accumulate_grad_batches = 8
+Trainer.accumulate_grad_batches = 4
 Trainer.logger = @WandbLogger()
 Trainer.callbacks = [@ModelCheckpoint()]
 Trainer.precision = "32"
@@ -39,13 +39,14 @@ SyncogenDataManager.batch_size = 64
 SyncogenDataManager.eval_batch_size = 64
 SyncogenDataManager.load_pharmacophores = False
 SyncogenDataManager.load_bonds = True
+SyncogenDataManager.sample_conformer = True
 
 # Optimizer
 Optimizer.lr = 3e-4
-Optimizer.weight_decay = 0.01
+Optimizer.weight_decay = 1e-5
 
 # Scheduler
-LRScheduler.num_warmup_steps = 1000
+LRScheduler.num_warmup_steps = 2500
 
 # Diffusion
 Diffusion.discrete_noise = @LinearNoise()
@@ -53,7 +54,7 @@ Diffusion.num_sample_steps = 100
 Diffusion.train_rot_align = True
 Diffusion.self_conditioning = True
 Diffusion.pharm_subset = 7
-Diffusion.losses = [@NLLLoss(), @MSELoss(), @BondLengthLoss(), @PairwiseDistanceLoss(), @SmoothLDDTLoss()]
+Diffusion.losses = [@NLLLoss(), @MSELoss(), @PairwiseDistanceLoss(), @BondLengthLoss(), @SmoothLDDTLoss()]
 Diffusion.generate_eval_samples = True
 Diffusion.sample_every_n_epochs = 1
 Diffusion.discrete_strategy = @MDLM()
@@ -76,7 +77,7 @@ MSELoss.coef = 1.0
 MSELoss.time_weighted = True
 
 # Bond length loss
-BondLengthLoss.coef = 2.0
+BondLengthLoss.coef = 0.2
 BondLengthLoss.sqrd = True
 BondLengthLoss.time_weighted = True
 BondLengthLoss.t_threshold = 0.25

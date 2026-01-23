@@ -269,7 +269,7 @@ class SyncogenDataset(Dataset):
         data = self.data_list[idx]
         # Pick a conformer
         if self.sample_conformer:
-            key = select_conformer_key(data.data_index, Path(self.conformers_path))
+            key = select_conformer_key(data.data_index, Path(self.conformers_path), random_conformer=True)
         else:
             key = f"mol_{data.data_index}_final_conf_0"
 
