@@ -265,23 +265,31 @@ def sdf_to_coordinates(sdf_path: str) -> torch.Tensor:
 def mol_to_pharm_cond(
     mol: Chem.Mol,
     batch_size: int,
-    n_subset: int,
+    min_subset: int,
+    max_subset: int,
     center: bool = True,
     normalize: bool = True,
+    pharm_indices: Optional[List[List[int]]] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Extract pharmacophore conditioning from a reference molecule.
 
     Args:
         mol: RDKit molecule with conformer
         batch_size: Number of copies to create (for batched conditioning)
-        n_subset: Max pharmacophores per sample (randomly subsampled per batch element)
+        min_subset: Minimum pharmacophores per sample
+        max_subset: Maximum pharmacophores per sample (randomly selected per batch element)
         center: Center molecule coordinates before extraction
         normalize: Normalize positions by COORDS_STD
+        pharm_indices: Optional list of pharmacophore indices to use. Can be:
+            - List of lists: [[idx1, idx2, ...], [idx3, idx4, ...], ...] for each batch element
+            - Single list: [idx1, idx2, ...] applied to all batch elements
+            - None: Random selection (default behavior)
+            Indices must be valid (0 <= idx < n_total) and count must be between min_subset and max_subset.
 
     Returns:
-        types: [batch_size, n_subset, n_pharm_types] one-hot pharmacophore types
-        pos: [batch_size, n_subset, 3] pharmacophore positions
-        mask: [batch_size, n_subset] padding mask
+        types: [batch_size, max_subset, n_pharm_types] one-hot pharmacophore types
+        pos: [batch_size, max_subset, 3] pharmacophore positions
+        mask: [batch_size, max_subset] padding mask
     """
     from shepherd_score.extract_profiles import get_pharmacophores
     from syncogen.constants.constants import N_PHARM
@@ -308,20 +316,56 @@ def mol_to_pharm_cond(
     types_onehot.scatter_(1, types.unsqueeze(1), 1)
     n_total = len(types)
 
-    # Storage for batched outputs
-    types_padded = torch.zeros((batch_size, n_subset, n_classes), dtype=torch.float32)
-    pos_padded = torch.zeros((batch_size, n_subset, 3), dtype=torch.float32)
-    mask = torch.zeros((batch_size, n_subset), dtype=torch.float32)
+    # Normalize pharm_indices format: convert single list to list of lists if needed
+    if pharm_indices is not None:
+        if isinstance(pharm_indices[0], int):
+            # Single list: apply to all batch elements
+            pharm_indices = [pharm_indices] * batch_size
+        elif len(pharm_indices) != batch_size:
+            raise ValueError(
+                f"pharm_indices must have length {batch_size} (one list per batch element), "
+                f"or be a single list applied to all elements. Got length {len(pharm_indices)}"
+            )
+
+    # Storage for batched outputs (pad to max_subset)
+    types_padded = torch.zeros((batch_size, max_subset, n_classes), dtype=torch.float32)
+    pos_padded = torch.zeros((batch_size, max_subset, 3), dtype=torch.float32)
+    mask = torch.zeros((batch_size, max_subset), dtype=torch.float32)
     types_padded[..., -1] = 1  # Default to padding class
 
     for b in range(batch_size):
-        if n_total > n_subset:
-            indices = torch.randperm(n_total)[:n_subset]
+        if pharm_indices is not None:
+            indices_list = pharm_indices[b]
+            n_selected = len(indices_list)
+            # Just check that n_selected is in range [min_subset, max_subset]
+            if not (min_subset <= n_selected <= max_subset):
+                raise ValueError(
+                    f"Number of specified pharmacophores ({n_selected}) is not within "
+                    f"[min_subset={min_subset}, max_subset={max_subset}]."
+                )
+            # Validate indices are in range
+            indices_tensor = torch.tensor(indices_list, dtype=torch.long)
+            if (indices_tensor < 0).any() or (indices_tensor >= n_total).any():
+                raise ValueError(
+                    f"Invalid pharmacophore indices: must be in range [0, {n_total-1}]. "
+                    f"Got: {indices_list}"
+                )
+            # Shuffle to prevent positional bias
+            shuffled_indices = indices_tensor[torch.randperm(len(indices_tensor))]
+            fill_len = n_selected
         else:
-            indices = torch.arange(n_total)
-        fill_len = min(n_total, n_subset)
-        types_padded[b, :fill_len] = types_onehot[indices[:fill_len]]
-        pos_padded[b, :fill_len] = pos[indices[:fill_len]]
+            # Randomly select n_subset for this batch element between min_subset and max_subset
+            n_subset = torch.randint(min_subset, max_subset + 1, (1,)).item()
+            if n_total > n_subset:
+                shuffled_indices = torch.randperm(n_total)[:n_subset]
+                fill_len = n_subset
+            else:
+                # Shuffle even when taking all to prevent positional bias
+                shuffled_indices = torch.randperm(n_total)
+                fill_len = n_total
+
+        types_padded[b, :fill_len] = types_onehot[shuffled_indices[:fill_len]]
+        pos_padded[b, :fill_len] = pos[shuffled_indices[:fill_len]]
         mask[b, :fill_len] = 1.0
 
     return types_padded, pos_padded, mask
