@@ -20,8 +20,8 @@ class ShepherdPharmacophores:
         pharm_coords,
         pharm_types,
         padding_mask,
-        n_subset: int = None,
-        pad_to: int = None,
+        min_subset: int = None,
+        max_subset: int = None,
         is_batched: bool = False,
     ):
         self.is_batched = bool(
@@ -62,143 +62,131 @@ class ShepherdPharmacophores:
             self.padding_mask = padding_mask
             self.types_onehot = pharm_indices_to_onehot(pharm_types)
 
-        if n_subset is not None:
-            # Subset to at most n_subset and pad inside subset to ensure uniform shapes
-            self.subset(n_subset)
+        if min_subset is not None and max_subset is not None:
+            # Subset with random selection between min_subset and max_subset
+            self.subset_with_range(min_subset, max_subset)
 
-        if pad_to is not None:
-            self.pad(pad_to)
+    def _subset_single_sample(
+        self,
+        valid_indices,
+        coords,
+        types,
+        types_onehot,
+        min_subset: int,
+        max_subset: int,
+    ):
+        """Subset a single sample: randomly select n_subset between min_subset and max_subset.
 
-    def subset(self, n_subset):
-        """Subset to at most n_subset and pad to exactly n_subset for uniform batching."""
+        If cur_len > n_subset: randomly select n_subset pharmacophores.
+        If cur_len <= n_subset: shuffle and take all.
+
+        Returns:
+            pos_sel: Selected coordinates [fill_len, 3]
+            types_idx_sel: Selected type indices [fill_len]
+            types_oh_sel: Selected type one-hot [fill_len, n_classes]
+            fill_len: Number of valid pharmacophores selected
+        """
+        cur_len = int(valid_indices.numel())
+
+        # Randomly select n_subset for this sample between min_subset and max_subset
+        n_subset = torch.randint(
+            min_subset, max_subset + 1, (1,), device=coords.device
+        ).item()
+
+        if cur_len > n_subset:
+            # Randomly select n_subset pharmacophores
+            sel = valid_indices[
+                torch.randperm(cur_len, device=coords.device)[:n_subset]
+            ]
+            fill_len = n_subset
+        else:
+            # Shuffle even when taking all to prevent positional bias
+            sel = valid_indices[torch.randperm(cur_len, device=coords.device)]
+            fill_len = cur_len
+
+        pos_sel = coords[sel]
+        types_idx_sel = types[sel]
+        types_oh_sel = types_onehot[sel]
+
+        return pos_sel, types_idx_sel, types_oh_sel, fill_len
+
+    def subset_with_range(self, min_subset: int, max_subset: int):
+        """Apply subsetting to all samples and pad to max_subset for uniform batching."""
+        assert min_subset <= max_subset, "min_subset must be <= max_subset"
+
+        feat_dim = self.coords.shape[-1]
+        n_classes = self.types_onehot.shape[-1]
+
         if self.is_batched:
             B = self.coords.shape[0]
-            feat_dim = self.coords.shape[-1]
-            n_classes = self.types_onehot.shape[-1]
-            pos_padded = torch.zeros((B, n_subset, feat_dim), device=self.coords.device)
-            types_padded = torch.zeros(
-                (B, n_subset, n_classes), device=self.coords.device
+            # Pad to max_subset for uniform batching
+            pos_padded = torch.zeros(
+                (B, max_subset, feat_dim), device=self.coords.device
             )
-            pharm_padding_mask = torch.zeros((B, n_subset), device=self.coords.device)
+            types_padded = torch.zeros(
+                (B, max_subset, n_classes), device=self.coords.device
+            )
+            pharm_padding_mask = torch.zeros((B, max_subset), device=self.coords.device)
             types_indices = torch.zeros(
-                (B, n_subset), dtype=self.types.dtype, device=self.types.device
-            )  # pad index=0 by default
+                (B, max_subset), dtype=self.types.dtype, device=self.types.device
+            )
             # fill padding class in one-hot by default
             types_padded[:, :, -1] = 1
+
             for b in range(B):
                 valid = (self.padding_mask[b] > 0).nonzero(as_tuple=False).squeeze(-1)
-                cur_len = int(valid.numel())
-                if cur_len > n_subset:
-                    sel = valid[
-                        torch.randperm(cur_len, device=self.coords.device)[:n_subset]
-                    ]
-                    pos_sel = self.coords[b][sel]
-                    types_idx_sel = self.types[b][sel]
-                    types_oh_sel = self.types_onehot[b][sel]
-                    fill_len = n_subset
-                else:
-                    pos_sel = self.coords[b][valid]
-                    types_idx_sel = self.types[b][valid]
-                    types_oh_sel = self.types_onehot[b][valid]
-                    fill_len = cur_len
+                pos_sel, types_idx_sel, types_oh_sel, fill_len = (
+                    self._subset_single_sample(
+                        valid,
+                        self.coords[b],
+                        self.types[b],
+                        self.types_onehot[b],
+                        min_subset,
+                        max_subset,
+                    )
+                )
                 pos_padded[b, :fill_len] = pos_sel
                 types_indices[b, :fill_len] = types_idx_sel
                 types_padded[b, :fill_len] = types_oh_sel
                 pharm_padding_mask[b, :fill_len] = 1
+
             self.coords = pos_padded
             self.types = types_indices
             self.types_onehot = types_padded
             self.padding_mask = pharm_padding_mask
             self.batch_size = B
-            return self
-        # Unbatched: produce exactly n_subset by padding/truncating
-        valid = (self.padding_mask > 0).nonzero(as_tuple=False).squeeze(-1)
-        cur_len = int(valid.numel())
-        feat_dim = self.coords.shape[-1]
-        n_classes = self.types_onehot.shape[-1]
-        pos_padded = torch.zeros((n_subset, feat_dim), device=self.coords.device)
-        types_padded = torch.zeros((n_subset, n_classes), device=self.coords.device)
-        types_idx_padded = torch.zeros(
-            (n_subset,), dtype=self.types.dtype, device=self.types.device
-        )
-        # default to padding class one-hot
-        types_padded[:, -1] = 1
-        if cur_len > 0:
-            if cur_len > n_subset:
-                sel = valid[
-                    torch.randperm(cur_len, device=self.coords.device)[:n_subset]
-                ]
-                pos_sel = self.coords[sel]
-                types_idx_sel = self.types[sel]
-                types_oh_sel = self.types_onehot[sel]
-                fill_len = n_subset
-            else:
-                pos_sel = self.coords[valid]
-                types_idx_sel = self.types[valid]
-                types_oh_sel = self.types_onehot[valid]
-                fill_len = cur_len
+        else:
+            # Unbatched: randomly select n_subset between min_subset and max_subset
+            valid = (self.padding_mask > 0).nonzero(as_tuple=False).squeeze(-1)
+            pos_padded = torch.zeros((max_subset, feat_dim), device=self.coords.device)
+            types_padded = torch.zeros(
+                (max_subset, n_classes), device=self.coords.device
+            )
+            types_idx_padded = torch.zeros(
+                (max_subset,), dtype=self.types.dtype, device=self.types.device
+            )
+            # default to padding class one-hot
+            types_padded[:, -1] = 1
+
+            pos_sel, types_idx_sel, types_oh_sel, fill_len = self._subset_single_sample(
+                valid,
+                self.coords,
+                self.types,
+                self.types_onehot,
+                min_subset,
+                max_subset,
+            )
             pos_padded[:fill_len] = pos_sel
             types_idx_padded[:fill_len] = types_idx_sel
             types_padded[:fill_len] = types_oh_sel
-        self.coords = pos_padded
-        self.types = types_idx_padded
-        self.types_onehot = types_padded
-        self.padding_mask = (
-            torch.arange(n_subset, device=self.coords.device) < cur_len
-        ).to(self.coords.dtype)
-        return self
 
-    def pad(self, n_pad):
-        """Pad pharmacophores to fixed size n_pad."""
-        if self.is_batched:
-            B = self.coords.shape[0]
-            pos_padded = torch.zeros(
-                (B, n_pad, self.coords.shape[-1]), device=self.coords.device
-            )
-            types_padded = torch.zeros(
-                (B, n_pad, self.types_onehot.shape[-1]), device=self.coords.device
-            )
-            pharm_padding_mask = torch.zeros((B, n_pad), device=self.coords.device)
-            for b in range(B):
-                cur_len = int((self.padding_mask[b] > 0).sum().item())
-                if cur_len == n_pad:
-                    pharm_padding_mask[b] = torch.ones_like(pharm_padding_mask[b])
-                    valid = (
-                        (self.padding_mask[b] > 0).nonzero(as_tuple=False).squeeze(-1)
-                    )
-                    pos_padded[b] = self.coords[b, valid]
-                    types_padded[b] = self.types_onehot[b, valid]
-                else:
-                    pharm_padding_mask[b, :cur_len] = 1
-                    types_padded[b, :, -1] = 1
-                    valid = (
-                        (self.padding_mask[b] > 0).nonzero(as_tuple=False).squeeze(-1)
-                    )
-                    valid = valid[:cur_len]
-                    types_padded[b, :cur_len] = self.types_onehot[b, valid]
-                    pos_padded[b, :cur_len] = self.coords[b, valid]
             self.coords = pos_padded
+            self.types = types_idx_padded
             self.types_onehot = types_padded
-            self.padding_mask = pharm_padding_mask
-            return self
-        # Unbatched
-        cur_len = int((self.padding_mask > 0).sum().item())
-        if cur_len == n_pad:
-            self.padding_mask = torch.ones_like(self.types)
-            return self
-        pharm_ones = torch.ones_like(self.types)
-        pharm_padding_mask = torch.zeros(n_pad)
-        pos_padded = torch.zeros((n_pad, self.coords.shape[1]))
-        types_padded = torch.zeros((n_pad, self.types_onehot.shape[1]))
-        pharm_padding_mask[:cur_len] = 1
-        types_padded[:, -1] = 1
-        valid = (self.padding_mask > 0).nonzero(as_tuple=False).squeeze(-1)
-        valid = valid[:cur_len]
-        types_padded[:cur_len] = self.types_onehot[valid]
-        pos_padded[:cur_len] = self.coords[valid]
-        self.coords = pos_padded
-        self.types_onehot = types_padded
-        self.padding_mask = pharm_padding_mask
+            self.padding_mask = (
+                torch.arange(max_subset, device=self.coords.device) < fill_len
+            ).to(self.coords.dtype)
+
         return self
 
     def __len__(self):

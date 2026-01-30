@@ -20,7 +20,7 @@ With pharmacophore conditioning:
 import argparse
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import gin
 import torch
@@ -79,6 +79,13 @@ def parse_args():
         action="store_true",
         help="Enable pharmacophore conditioning by setting SyncogenDataManager.load_pharmacophores=True in gin before Diffusion is instantiated",
     )
+    parser.add_argument(
+        "--pharm_indices",
+        type=str,
+        default=None,
+        help="Comma-separated list of pharmacophore indices to condition on (e.g., '0,1,2,3,4,5,6'). "
+        "If provided, must be between min_subset and max_subset. Applied to all batch elements.",
+    )
     return parser.parse_args()
 
 
@@ -111,6 +118,7 @@ def sample(
     batch_size_override: Optional[int] = None,
     device: str = "cuda",
     seed: int = 42,
+    pharm_indices: Optional[List[int]] = None,
 ):
     """Main sampling function."""
 
@@ -149,9 +157,11 @@ def sample(
         types, pos, mask = mol_to_pharm_cond(
             ref_mol,
             batch_size=model.eval_batch_size,
-            n_subset=model.pharm_subset,
+            min_subset=model.pharm_min_subset,
+            max_subset=model.pharm_max_subset,
             center=True,
             normalize=True,
+            pharm_indices=pharm_indices,
         )
         pharm_cond = (types.to(device), pos.to(device), mask.to(device))
 
@@ -199,13 +209,17 @@ def sample(
             valid_coords = atom_coords[: atom_mask.shape[0], :][atom_mask]
             mol = set_mol_coordinates(mol, valid_coords.cpu())
 
+            aligned_mol = None
+            similarity = None
+            if ref_mol is not None:
+                aligned_mol, similarity = _align_and_similarity(mol, ref_mol)
             energy = calc_energy(mol)
-            similarity = _compute_similarity(mol, ref_mol) if ref_mol else None
 
             smiles = Chem.MolToSmiles(mol)
             bb_indices = graph_i.bb_indices[: int(graph_i.lengths.item())].tolist()
             rxn_tuple = graph_i.rxn_tuple
 
+            # Store the aligned molecule if it exists, otherwise the original
             results.append(
                 {
                     "idx": len(results),
@@ -214,7 +228,7 @@ def sample(
                     "similarity": similarity,
                     "building_blocks": bb_indices,
                     "reactions": [r.tolist() for r in rxn_tuple],
-                    "mol": mol,
+                    "mol": aligned_mol if aligned_mol is not None else mol,
                 }
             )
 
@@ -274,17 +288,21 @@ def sample(
     return results
 
 
-def _compute_similarity(mol: Chem.Mol, ref_mol: Chem.Mol) -> Optional[float]:
-    """Compute shape similarity between generated and reference molecule."""
+def _align_and_similarity(mol: Chem.Mol, ref_mol: Chem.Mol):
+    """
+    Returns tuple: (aligned_mol, similarity)
+    If alignment/score fails, returns (None, None).
+    """
     try:
         from shepherd_score.alignment import crippen_align
         from rdkit.Chem.rdShapeHelpers import ShapeTanimotoDist
 
         mol_aligned = crippen_align(ref_mol, mol)
         dist = ShapeTanimotoDist(mol_aligned, ref_mol)
-        return 1.0 - dist
+        similarity = 1.0 - dist
+        return mol_aligned, similarity
     except Exception:
-        return None
+        return None, None
 
 
 def main():
@@ -299,6 +317,17 @@ def main():
         bindings=gin_bindings,
     )
 
+    # Parse pharmacophore indices if provided
+    pharm_indices = None
+    if args.pharm_indices is not None:
+        try:
+            pharm_indices = [int(x.strip()) for x in args.pharm_indices.split(",")]
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid pharm_indices format. Expected comma-separated integers, "
+                f"got: {args.pharm_indices}. Error: {e}"
+            )
+
     sample(
         checkpoint_path=args.checkpoint_path,
         output_dir=args.output_dir,
@@ -310,6 +339,7 @@ def main():
         batch_size_override=args.batch_size,
         device=args.device,
         seed=args.seed,
+        pharm_indices=pharm_indices,
     )
 
 

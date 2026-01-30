@@ -45,13 +45,13 @@ from syncogen.models.semla import SemlaGenerator
 import torch_geometric
 
 
-def get_backbone(backbone: str, self_conditioning: bool, pharm_subset: int):
+def get_backbone(backbone: str, self_conditioning: bool, pharm_max_subset: int):
     if backbone == "semla":
         return SemlaGenerator(self_conditioning=self_conditioning)
     elif backbone == "semla_pharm":
         return SemlaPharmGenerator(
             self_conditioning=self_conditioning,
-            pharmacophore_subset=pharm_subset,
+            pharmacophore_subset=pharm_max_subset,
         )
     raise ValueError(f"Unknown backbone: {backbone}")
 
@@ -87,7 +87,8 @@ class Diffusion(L.LightningModule):
         optimizer: Optimizer = None,
         lr_scheduler: LRScheduler = None,
         ema_decay: float = 0.0,
-        pharm_subset: int = 7,
+        pharm_min_subset: int = 7,
+        pharm_max_subset: int = 7,
         scale_noise: bool = False,
         scale_noise_factor: float = 0.2,
         num_fragments_probs: Optional[Dict[int, float]] = None,
@@ -112,7 +113,7 @@ class Diffusion(L.LightningModule):
             )
             backbone = "semla_pharm"
 
-        self.backbone = get_backbone(backbone, self_conditioning, pharm_subset)
+        self.backbone = get_backbone(backbone, self_conditioning, pharm_max_subset)
         self.losses = LossList(losses)
         self.metrics = MetricsList(metrics)
         self.neg_infinity = -25000.0
@@ -130,8 +131,9 @@ class Diffusion(L.LightningModule):
         self._optimizer_config = optimizer
         self._lr_scheduler_config = lr_scheduler
 
-        # Store pharm_subset for use in training
-        self.pharm_subset = pharm_subset
+        # Store pharm subset params for use in training
+        self.pharm_min_subset = pharm_min_subset
+        self.pharm_max_subset = pharm_max_subset
 
         # Override fragment number probabilities if provided
         if num_fragments_probs is not None:
@@ -279,7 +281,8 @@ class Diffusion(L.LightningModule):
                 pharm_coords=pharm_pos_dense,
                 pharm_types=pharm_types_dense,
                 padding_mask=pharm_mask_dense,
-                n_subset=self.pharm_subset,
+                min_subset=self.pharm_min_subset,
+                max_subset=self.pharm_max_subset,
             )
             ground_truth_coords.attach_pharmacophores(
                 pharm_coords=pharms.coords,
@@ -425,12 +428,13 @@ class Diffusion(L.LightningModule):
             max_num_pharm=MAX_PHARM,
         )
 
-        # Subset pharmacophores to 7
+        # Subset pharmacophores
         pharms = ShepherdPharmacophores(
             pharm_coords=pharm_pos_dense,
             pharm_types=pharm_types_dense,
             padding_mask=pharm_mask_dense,
-            n_subset=self.pharm_subset,
+            min_subset=self.pharm_min_subset,
+            max_subset=self.pharm_max_subset,
         )
 
         # Create coords object with pharmacophores attached for joint augmentation

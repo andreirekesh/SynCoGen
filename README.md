@@ -126,7 +126,7 @@ python run_sampling_cond.py \
     --num_batches 1 \
     --num_steps 100 \
     --gin "Diffusion.num_fragments_probs = {3: 1.0, 4: 0.0, 5: 0.0}" \
-    --pharm_subset 7
+    --pharm_min_subset 7 --pharm_max_subset 7
 ```
 
 **Sampling arguments**:
@@ -136,6 +136,7 @@ python run_sampling_cond.py \
 - `--batch_size`: Number of molecules to generate
 - `--num_steps`: Number of diffusion steps for sampling (typically 100-200)
 - `--reference_ligand` (conditional only): Path to reference ligand SDF file for pharmacophore extraction
-- `--pharm_subset` (conditional only): Number of pharmacophores to use for conditioning (default: 7)
+- `--pharm_min_subset` (conditional only): Minimum number of pharmacophores to use for conditioning (default: 7)
+- `--pharm_max_subset` (conditional only): Maximum number of pharmacophores to use for conditioning (default: 7)
 
-**Note**: The provided checkpoints were trained to use 7 random pharmacophores for conditional sampling. For unconditional sampling, omit the `--reference_ligand` and `--pharm_subset` arguments.
+**Note**: The provided checkpoints were trained to use 7 random pharmacophores for conditional sampling. For unconditional sampling, omit the `--reference_ligand` and `--pharm_min_subset`/`--pharm_max_subset` arguments.
