@@ -100,7 +100,7 @@ python train.py --config configs/experiments/synspace_original_cond.gin --vocab_
 ```
 
 ### Sampling
-We provide weights for both unconditional and conditional sampling: [here](https://us-west-1.console.aws.amazon.com/s3/object/tyers?region=us-west-1&prefix=synspace_original_uncond.ckpt) and [here](https://us-west-1.console.aws.amazon.com/s3/object/tyers?region=us-west-1&prefix=synspace_original_cond.ckpt), respectively.
+We provide weights for both unconditional and conditional sampling: [here](https://huggingface.co/DreiSSB/SynCoGen-SynSpace-Unconditional) and [here](https://huggingface.co/DreiSSB/SynCoGen-SynSpace-Conditional), respectively.
 
 For unconditional 3D molecule generation:
 ```bash
