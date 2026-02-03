@@ -35,7 +35,7 @@ We use continuous flow matching to predict the coordinates of the atoms in the m
 ### Data Generation
 See vocabulary/README.md.
 
-The full SynSpace dataset is available [here](https://tyers.s3.us-west-1.amazonaws.com/all_steps_clean.tgz). For SynSpace, download all_steps_clean.tgz. For pharmacophores, download pharmacophores.lmdb. An LMDB version of SynSpace conformers will be uploaded soon.
+The full SynSpace dataset is available [here](https://huggingface.co/datasets/DreiSSB/SynSpace). 
 
 ### Directory Structure
 ```

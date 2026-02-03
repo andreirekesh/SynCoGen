@@ -224,7 +224,7 @@ class Diffusion(L.LightningModule):
         """
         # STEP 1: Assemble dense data from dataloader batch
         # 1.1: Dense graph data
-        X_dense, E_dense, node_padding_mask, edge_padding_mask = to_dense_graph(
+        X_dense, E_dense, node_padding_mask = to_dense_graph(
             x=batch.x,
             edge_index=batch.edge_index,
             edge_attr=batch.edge_attr,
@@ -233,7 +233,7 @@ class Diffusion(L.LightningModule):
         )
 
         # 1.2: Dense coords data
-        C_dense, coords_mask_dense = to_dense_coords(
+        C_dense, _ = to_dense_coords(
             coordinates=batch.coordinates,
             coords_mask=batch.coords_mask,
             batch=batch.batch,
@@ -241,7 +241,7 @@ class Diffusion(L.LightningModule):
         )
 
         # 1.3 Build graph object
-        ground_truth_graph = BBRxnGraph.from_onehot(
+        ground_truth_graph = BBRxnGraph.from_indices(
             X_dense, E_dense, node_mask=node_padding_mask
         )
         ground_truth_graph.apply_edge_givens()  # Enforce: diagonals=NO-EDGE, padding=zeros
