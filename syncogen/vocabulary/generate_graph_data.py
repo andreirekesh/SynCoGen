@@ -266,10 +266,11 @@ def sample_random_molecules(
             graph = BBRxnGraph.from_tuple(
                 torch.tensor(frag_indices), torch.tensor(reaction_info)
             )
-            X = graph.bb_onehot
-            E = graph.rxn_onehot
+            X = graph.bb_indices.long()
             edge_index = adj_matrix.nonzero().t()
-            edge_attr = E[edge_index[0], edge_index[1]]
+
+            rxn_indices_matrix = graph.rxn_indices
+            edge_attr = rxn_indices_matrix[edge_index[0], edge_index[1]].long()
 
             smiles, mol = mfg.to_smiles(), mfg.to_mol()
             if smiles not in seen_smiles and is_valid_smiles(mol) and not "." in smiles:
@@ -285,9 +286,7 @@ def sample_random_molecules(
                 labeled_molecules.append(mol)
                 pbar.update(1)
             else:
-                print(
-                    f"Failed to reconstruct smiles or duplicate for {smiles}, {X.argmax(dim=-1)}"
-                )
+                print(f"Failed to reconstruct smiles or duplicate for {smiles}, {X}")
 
     pbar.close()
     # TODO: Add conformer generation
@@ -425,7 +424,7 @@ if __name__ == "__main__":
     lipinski_stats = {"mw": [], "logp": [], "hbd": [], "hba": [], "qed": []}
 
     for molecule in molecules:
-        bbs_mol = list(torch.argmax(molecule.x, dim=-1).numpy())
+        bbs_mol = list(molecule.x.numpy())
         used_bbs.update(bbs_mol)
 
         # Calculate molecular properties
