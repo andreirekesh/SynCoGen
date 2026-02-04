@@ -19,7 +19,7 @@ include "configs/sampling/integrators/euler.gin"
 ModelCheckpoint.dirpath = "checkpoints/synspace_original_cond"
 
 # Data paths
-SyncogenDataManager.graphs_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/dataset_list_full.pt"
+SyncogenDataManager.graphs_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean_indices/dataset_list_full_indices.pt"
 SyncogenDataManager.conformers_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/conformers/mol2s.lmdb"
 SyncogenDataManager.pharmacophore_path = "/hpf/projects/mkoziarski/arekesh/data/all_steps_clean/pharmacophores.lmdb"
 

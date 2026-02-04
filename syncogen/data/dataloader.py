@@ -14,7 +14,22 @@ from syncogen.utils.file_readers import (
 )
 from syncogen.constants.constants import MAX_ATOMS_PER_BB
 from syncogen.api.graph.graph import BBRxnGraph
-from syncogen.data.utils import to_dense_graph
+
+
+def expand_edge_indices_to_matrix(edge_index, edge_attr, n_nodes, device):
+    """Expand sparse edge indices to full (N, N) reaction index matrix."""
+    no_edge_idx = (
+        BBRxnGraph.VOCAB_NUM_RXNS
+        * BBRxnGraph.VOCAB_NUM_CENTERS
+        * BBRxnGraph.VOCAB_NUM_CENTERS
+    )
+    rxn_indices_matrix = torch.full(
+        (n_nodes, n_nodes), no_edge_idx, dtype=torch.long, device=device
+    )
+    rxn_indices_matrix[edge_index[0], edge_index[1]] = edge_attr
+    rxn_indices_matrix = torch.maximum(rxn_indices_matrix, rxn_indices_matrix.T)
+    rxn_indices_matrix.fill_diagonal_(no_edge_idx)
+    return rxn_indices_matrix
 
 
 @gin.configurable
@@ -269,38 +284,24 @@ class SyncogenDataset(Dataset):
         data = self.data_list[idx]
         # Pick a conformer
         if self.sample_conformer:
-            key = select_conformer_key(data.data_index, Path(self.conformers_path), random_conformer=True)
+            key = select_conformer_key(
+                data.data_index, Path(self.conformers_path), random_conformer=True
+            )
         else:
             key = f"mol_{data.data_index}_final_conf_0"
 
-        # Compute ground truth atom mask from graph to account for dropped atoms
-        # Convert sparse graph to dense format (single graph, so batch size = 1)
-        batch = torch.zeros(
-            data.x.shape[0], dtype=torch.long
-        )  # All nodes in same batch
-        X_dense, E_dense, _, _ = to_dense_graph(
-            x=data.x,
-            edge_index=data.edge_index,
-            edge_attr=data.edge_attr,
-            batch=batch,
-            max_num_nodes=data.x.shape[0],  # Use actual number of nodes
+        # Expand sparse edge indices to full (N, N) reaction matrix and create graph
+        n_nodes = data.x.shape[0]
+        node_mask = torch.ones(n_nodes, dtype=torch.bool, device=data.x.device)
+        rxn_indices_matrix = expand_edge_indices_to_matrix(
+            data.edge_index, data.edge_attr, n_nodes, data.x.device
         )
-        # Remove batch dimension (single graph)
-        X_dense = X_dense[0]
-        E_dense = E_dense[0]
-
-        # Create graph and get ground truth atom mask
-        # Single graph without padding - all nodes are valid
-        n_nodes = X_dense.shape[0]
-        node_mask = torch.ones(n_nodes, dtype=torch.bool, device=X_dense.device)
-        graph = BBRxnGraph.from_onehot(X_dense, E_dense, node_mask=node_mask)
+        graph = BBRxnGraph.from_indices(data.x, rxn_indices_matrix, node_mask=node_mask)
         atom_mask = (
             graph.ground_truth_atom_mask.bool()
         )  # Shape: [n_fragments * MAX_ATOMS_PER_BB], True = valid
         # Reshape to [n_fragments, MAX_ATOMS_PER_BB]
-        n_fragments = X_dense.shape[0]
-        atom_mask = atom_mask.reshape(n_fragments, MAX_ATOMS_PER_BB)
-
+        atom_mask = atom_mask.reshape(n_nodes, MAX_ATOMS_PER_BB)
         coordinates, coords_mask, bonds = get_coordinates(
             key,
             Path(self.conformers_path),

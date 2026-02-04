@@ -1,6 +1,7 @@
 import torch
 import torch_geometric
 from torch_geometric.utils import to_dense_batch, to_dense_adj
+from syncogen.api.graph.graph import BBRxnGraph
 
 
 def to_dense_graph(
@@ -10,30 +11,29 @@ def to_dense_graph(
     batch,
     max_num_nodes,
 ):
-    """Densify node and edge tensors and produce padding masks."""
-    nodes_onehot, node_padding_mask = to_dense_batch(
+    """Densify node and edge tensors and produce padding masks. Returns indices."""
+    nodes_indices, node_padding_mask = to_dense_batch(
         x=x, batch=batch, max_num_nodes=max_num_nodes
     )
-    edge_index, edge_attr = torch_geometric.utils.remove_self_loops(
-        edge_index, edge_attr
-    )
-    edges_onehot = to_dense_adj(
+
+    # Densify edge indices directly: (B, N, N)
+    edges_indices = to_dense_adj(
         edge_index=edge_index,
         batch=batch,
-        edge_attr=edge_attr,
+        edge_attr=edge_attr.long(),
         max_num_nodes=max_num_nodes,
     )
 
-    # Calculate edge mask from node mask
-    edge_padding_mask = node_padding_mask.unsqueeze(-1) & node_padding_mask.unsqueeze(
-        -2
+    # Set NO_EDGE index for empty positions (where to_dense_adj returns 0)
+    no_edge_idx = (
+        BBRxnGraph.VOCAB_NUM_RXNS
+        * BBRxnGraph.VOCAB_NUM_CENTERS
+        * BBRxnGraph.VOCAB_NUM_CENTERS
+        + 2
+        - 2  # rxn_pad - 2 = NO_EDGE index
     )
-    # Make E symmetric by copying the upper triangle to the lower triangle (for first channel)
-    edges_onehot[:, :, :, 0] = torch.triu(edges_onehot[:, :, :, 0]) + torch.triu(
-        edges_onehot[:, :, :, 0], 1
-    ).transpose(-1, -2)
-    edges_onehot = encode_no_edge(edges_onehot)
-    return nodes_onehot, edges_onehot, node_padding_mask, edge_padding_mask
+    edges_indices[edges_indices == 0] = no_edge_idx
+    return nodes_indices, edges_indices, node_padding_mask
 
 
 def to_dense_coords(
