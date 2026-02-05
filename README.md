@@ -2,18 +2,6 @@
   <img src="syncogen.gif" width="400">
 </p>
 
-<br>
-<p align="center">
-  <b><span style="color:black; font-size:1.25em">
-    NOTE: This is a major cleanup and reimplementation of SynCoGen. <br>
-    As of 1/15/2026, <b>sampling with downloadable weights</b> (see below) works as intended, <br>
-    but <b>training is currently unstable</b> and remains under development. <br>
-    Full training functionality is coming soon. Thank you for your patience!
-  </span></b>
-</p>
-
-<br>
-
 ## SynCoGen
 **Syn**thesizable **CoGen**eration (**SynCoGen**) is a generative small molecule design framework comprising a simultaneous absorbing-state discrete diffusion model and continuous flow matching. The discrete diffusion model is based on [Simple and Effective Masked Diffusion Language Models](https://arxiv.org/pdf/2406.07524) for synthesizable molecular generation, adapted from [this repository](https://github.com/kuleshov-group/mdlm) and using the SUBS parametrization. The continuous flow matching model is implemented as a conditional flow matching over molecular coordinates. We provide a simple graph transformer backbone.
 
