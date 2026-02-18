@@ -92,7 +92,7 @@ We provide weights for both unconditional and conditional sampling: [here](https
 
 For unconditional 3D molecule generation:
 ```bash
-python run_sampling_uncond.py \
+python sample.py \
     --config configs/experiments/synspace_original_uncond.gin \
     --checkpoint_path <path_to_unconditional_checkpoint> \
     --vocab_dir vocabulary/original \
@@ -104,7 +104,7 @@ python run_sampling_uncond.py \
 
 For conditional sampling with pharmacophore constraints (setup):
 ```bash
-python run_sampling_cond.py \
+python sample.py \
     --config configs/experiments/synspace_original_cond.gin \
     --checkpoint_path <path_to_conditional_checkpoint> \
     --vocab_dir vocabulary/original \
