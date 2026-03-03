@@ -24,15 +24,29 @@ def to_dense_graph(
         max_num_nodes=max_num_nodes,
     )
 
-    # Set NO_EDGE index for empty positions (where to_dense_adj returns 0)
     no_edge_idx = (
         BBRxnGraph.VOCAB_NUM_RXNS
         * BBRxnGraph.VOCAB_NUM_CENTERS
         * BBRxnGraph.VOCAB_NUM_CENTERS
-        + 2
-        - 2  # rxn_pad - 2 = NO_EDGE index
     )
-    edges_indices[edges_indices == 0] = no_edge_idx
+    edge_padding_mask = node_padding_mask.unsqueeze(-1) & node_padding_mask.unsqueeze(-2)
+    
+    # Have to do this to differentiate between 0-index edges and no-edge indices
+    has_edge = torch.zeros_like(edges_indices, dtype=torch.bool)
+    B = edges_indices.shape[0]
+    for b in range(B):
+        edge_mask = batch[edge_index[0]] == b
+        batch_edge_index = edge_index[:, edge_mask]
+        if batch_edge_index.shape[1] > 0:
+            node_start = (batch == b).nonzero()[0, 0].item()
+            local_indices = batch_edge_index - node_start
+            has_edge[b, local_indices[0], local_indices[1]] = True
+            has_edge[b] = torch.maximum(has_edge[b], has_edge[b].T)
+    
+    edges_indices[~edge_padding_mask] = no_edge_idx
+    edges_indices[(edges_indices == 0) & edge_padding_mask & ~has_edge] = no_edge_idx
+    for b in range(B):
+        edges_indices[b].fill_diagonal_(no_edge_idx)
     return nodes_indices, edges_indices, node_padding_mask
 
 
