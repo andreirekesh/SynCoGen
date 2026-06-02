@@ -53,6 +53,7 @@ SynCoGenRW/
 │  │  ├─ noise/            # Noise schedule implementations
 │  │  ├─ sampling/         # Sampling strategies and integrators
 │  │  └─ training/         # Training loop and optimizer wrappers
+│  ├─ eval/                # Post-hoc evaluation metrics for generated molecules
 │  ├─ logging/               # Logging infrastructure (callbacks, loggers, metrics)
 │  ├─ models/             # Model architectures (SEMLA, SEMLA-Pharm)
 │  └─ utils/              # Utility functions (file I/O, RDKit helpers)
@@ -127,3 +128,23 @@ python sample.py \
 - `--pharm_subset` (conditional only): Number of pharmacophores to use for conditioning (default: 7)
 
 **Note**: The provided checkpoints were trained to use 7 random pharmacophores for conditional sampling. For unconditional sampling, omit the `--reference_ligand` and `--pharm_subset` arguments.
+
+### Evaluation
+
+`syncogen.eval` scores generated molecules used in the paper (validity, uniqueness, novelty, diversity, QED, SA score, xTB/MMFF energies, and optionally retrosynthesis success and PoseBusters validity. Note one needs to install xTB, aizynth, syntheseus, and posebusters; aizynth and posebusters have conflicting rdkit requirements, so keep them in separate environments) 
+
+```bash
+# 3D samples with GFN-FF + GFN2 energies
+python -m syncogen.eval.metrics \
+    --input samples/synspace_original_uncond \
+    --input_mode sdf \
+    --xtb_versions mmff gfnff 2 \
+    --aizynth --aizynth_config "$AIZYNTH_CONFIG" \
+    --syntheseus --syntheseus_inventory "${INVENTORY[@]}" \
+    --subsample 100 --num_workers 8 \
+    --posebuster \
+    --out_json results.json
+
+# 2D metrics only (no energy / no xtb binary needed)
+python -m syncogen.eval.metrics --input generated.csv --xtb_versions none --out_json results.json
+```
