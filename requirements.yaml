@@ -1,6 +1,7 @@
 name: syncogen
 channels:
   - pytorch
+  - conda-forge
   - anaconda
   - nvidia
   - defaults
@@ -10,6 +11,7 @@ dependencies:
   - pip=23.3.1
   - python=3.9
   - pytorch-cuda=12.1
+  - xtb=6.7.1
   - pip:
       - torch==2.2.2
       - torchvision==0.17.2
@@ -43,3 +45,7 @@ dependencies:
       - shepherd-score==1.0.0
       - lmdb==1.6.2
       - gin-config==0.5.0
+# Optional extras for syncogen.eval (install only what you need). You may need a separate environment.
+#   pip install posebusters        # --posebuster (3D geometry validity)
+#   pip install aizynthfinder      # --aizynth (also needs downloaded models + a config YAML)
+#   pip install "syntheseus[all]"  # --syntheseus (also needs a building-block inventory)
