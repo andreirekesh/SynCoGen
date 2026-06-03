@@ -5,6 +5,7 @@ The two retrosynthesis back-ends are optional and disabled by default:
 * `AiZynthFinder <https://github.com/MolecularAI/aizynthfinder>`_
 * `Syntheseus <https://github.com/microsoft/syntheseus>`_
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,10 +31,20 @@ except ImportError:
 try:
     from syntheseus import Molecule
     from syntheseus.search.mol_inventory import SmilesListInventory
-    from syntheseus.reaction_prediction.inference import LocalRetroModel, RootAlignedModel
-    from syntheseus.search.algorithms.best_first.retro_star import RetroStarSearch, MolIsPurchasableCost
-    from syntheseus.search.node_evaluation.common import ReactionModelLogProbCost, ConstantNodeEvaluator
+    from syntheseus.reaction_prediction.inference import (
+        LocalRetroModel,
+        RootAlignedModel,
+    )
+    from syntheseus.search.algorithms.best_first.retro_star import (
+        RetroStarSearch,
+        MolIsPurchasableCost,
+    )
+    from syntheseus.search.node_evaluation.common import (
+        ReactionModelLogProbCost,
+        ConstantNodeEvaluator,
+    )
     from syntheseus.search.analysis.route_extraction import iter_routes_time_order
+
     _HAS_SYNTHESEUS = True
 except ImportError:
     _HAS_SYNTHESEUS = False
@@ -94,8 +105,14 @@ class Synthesizability:
         if syntheseus:
             if not _HAS_SYNTHESEUS:
                 raise ImportError("syntheseus is not installed but syntheseus=True.")
-            self._inventory = SmilesListInventory(smiles_list=list(syntheseus_inventory or []))
-            model = LocalRetroModel if syntheseus_model.lower() == "local_retro" else RootAlignedModel
+            self._inventory = SmilesListInventory(
+                smiles_list=list(syntheseus_inventory or [])
+            )
+            model = (
+                LocalRetroModel
+                if syntheseus_model.lower() == "local_retro"
+                else RootAlignedModel
+            )
             self._search = RetroStarSearch(
                 reaction_model=model(use_cache=True, default_num_results=10),
                 mol_inventory=self._inventory,
@@ -133,10 +150,12 @@ class Synthesizability:
             mol = _bh2_to_boronic(Chem.RemoveHs(mol))
             smi = Chem.MolToSmiles(mol, canonical=True)
             solved, score = self._aizynth_one(smi)
-            results.append({
-                "sa_score": float(sascorer.calculateScore(mol)),
-                "aizynth_solved": solved,
-                "aizynth_score": score,
-                "syntheseus_solved": self._syntheseus_one(smi),
-            })
+            results.append(
+                {
+                    "sa_score": float(sascorer.calculateScore(mol)),
+                    "aizynth_solved": solved,
+                    "aizynth_score": score,
+                    "syntheseus_solved": self._syntheseus_one(smi),
+                }
+            )
         return results

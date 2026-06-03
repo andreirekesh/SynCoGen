@@ -7,6 +7,7 @@ kcal/mol as ``(total, non_covalent, non_bonded, num_atoms)``. Back-ends:
 * ``"gfnff"``         - GFN-FF single point (needs the ``xtb`` executable).
 * ``"0"|"1"|"2"``     - GFN-n xTB single point (needs the ``xtb`` executable).
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,13 +42,28 @@ def _num_atoms(xyz_path: str) -> int:
         return int(f.readline().strip())
 
 
-def _run_xtb(input_file: str, out_dir: str, name: str, xtb_path: str,
-             xtb_version: str, charge: int, num_threads: int = 1) -> None:
+def _run_xtb(
+    input_file: str,
+    out_dir: str,
+    name: str,
+    xtb_path: str,
+    xtb_version: str,
+    charge: int,
+    num_threads: int = 1,
+) -> None:
     """Run a single xTB single-point calculation (output written to ``name.out``)."""
     os.makedirs(out_dir, exist_ok=True)
     gfn = ["--gfnff"] if str(xtb_version) == "gfnff" else ["--gfn", str(xtb_version)]
-    cmd = [xtb_path, os.path.abspath(input_file), "--namespace", name,
-           "--parallel", str(num_threads), "--charge", str(charge)] + gfn
+    cmd = [
+        xtb_path,
+        os.path.abspath(input_file),
+        "--namespace",
+        name,
+        "--parallel",
+        str(num_threads),
+        "--charge",
+        str(charge),
+    ] + gfn
     with open(os.path.join(out_dir, f"{name}.out"), "a") as f:
         subprocess.run(cmd, check=True, cwd=out_dir, stdout=f, stderr=subprocess.STDOUT)
 
@@ -63,7 +79,9 @@ def _parse_gfnff(out_file: str) -> Optional[dict]:
             if in_block:
                 if ":: total charge" in line.lower():
                     break
-                m = re.search(r"::\s+(\S+)\s+energy\s+(-?\d+\.\d+)\s+eh\s+::", line.lower())
+                m = re.search(
+                    r"::\s+(\S+)\s+energy\s+(-?\d+\.\d+)\s+eh\s+::", line.lower()
+                )
                 if m:
                     energies[m.group(1)] = float(m.group(2))
     if not energies:
@@ -95,7 +113,12 @@ def _parse_gfn(out_file: str) -> Optional[dict]:
                 e["dispersion"] = float(line.split()[3])
     if not e:
         return None
-    nbi = e.get("dispersion", 0.0) + e.get("iso_es", 0.0) + e.get("aniso_es", 0.0) + e.get("aniso_xc", 0.0)
+    nbi = (
+        e.get("dispersion", 0.0)
+        + e.get("iso_es", 0.0)
+        + e.get("aniso_es", 0.0)
+        + e.get("aniso_xc", 0.0)
+    )
     return {
         "total": e.get("total", 0.0) * HARTREE_TO_KCAL,
         "nci": e.get("dispersion", 0.0) * HARTREE_TO_KCAL,
@@ -139,10 +162,20 @@ def single_point_energy(
     work = os.path.join(out_dir, f"xtb_{name}")
     try:
         _write_xyz(mol, 0, xyz)
-        _run_xtb(xyz, work, name, xtb_path, xtb_version,
-                 Chem.GetFormalCharge(mol) if charge is None else charge)
+        _run_xtb(
+            xyz,
+            work,
+            name,
+            xtb_path,
+            xtb_version,
+            Chem.GetFormalCharge(mol) if charge is None else charge,
+        )
         out_file = os.path.join(work, f"{name}.out")
-        parsed = _parse_gfnff(out_file) if str(xtb_version) == "gfnff" else _parse_gfn(out_file)
+        parsed = (
+            _parse_gfnff(out_file)
+            if str(xtb_version) == "gfnff"
+            else _parse_gfn(out_file)
+        )
         if parsed is None:
             return None
         return (parsed["total"], parsed["nci"], parsed["nbi"], _num_atoms(xyz))
@@ -169,11 +202,19 @@ def compute_energies(
     results: List[Optional[EnergyTuple]] = [None] * len(mols)
     with ProcessPoolExecutor(max_workers=n_jobs) as pool:
         futures = {
-            pool.submit(single_point_energy, mol, i, xtb_version=xtb_version,
-                        xtb_path=xtb_path, out_dir=out_dir): i
+            pool.submit(
+                single_point_energy,
+                mol,
+                i,
+                xtb_version=xtb_version,
+                xtb_path=xtb_path,
+                out_dir=out_dir,
+            ): i
             for i, mol in enumerate(mols)
         }
-        for future in tqdm(as_completed(futures), total=len(futures), desc=f"Energy ({xtb_version})"):
+        for future in tqdm(
+            as_completed(futures), total=len(futures), desc=f"Energy ({xtb_version})"
+        ):
             idx = futures[future]
             try:
                 results[idx] = future.result(timeout=task_timeout)

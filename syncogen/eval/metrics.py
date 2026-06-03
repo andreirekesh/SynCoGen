@@ -5,6 +5,7 @@ energies (xTB/MMFF) and optional retrosynthesis success (AiZynthFinder /
 Syntheseus) and PoseBusters validity. Run ``python -m syncogen.eval.metrics
 --help`` for the CLI.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,7 +41,7 @@ def _internal_diversity(fps: Sequence) -> float:
     """1 - mean pairwise Tanimoto similarity."""
     total, pairs = 0.0, 0
     for i in range(len(fps)):
-        sims = DataStructs.BulkTanimotoSimilarity(fps[i], fps[i + 1:])
+        sims = DataStructs.BulkTanimotoSimilarity(fps[i], fps[i + 1 :])
         total += sum(sims)
         pairs += len(sims)
     return 1.0 - total / pairs if pairs else 0.0
@@ -166,12 +167,23 @@ def evaluate(
         try:
             for version in xtb_versions:
                 energy[version] = compute_energies(
-                    mols, xtb_version=version, xtb_path=xtb_path,
-                    out_dir=str(Path(scratch) / version), n_jobs=num_workers,
+                    mols,
+                    xtb_version=version,
+                    xtb_path=xtb_path,
+                    out_dir=str(Path(scratch) / version),
+                    n_jobs=num_workers,
                 )
                 energy_per_atom[version] = [_per_atom(e) for e in energy[version]]
                 avg_energy_per_atom[version] = [
-                    float(np.nanmean([row[i] for row in energy_per_atom[version] if row[i] is not None]))
+                    float(
+                        np.nanmean(
+                            [
+                                row[i]
+                                for row in energy_per_atom[version]
+                                if row[i] is not None
+                            ]
+                        )
+                    )
                     for i in range(3)
                 ]
         finally:
@@ -215,13 +227,21 @@ def evaluate(
 
     # ---- synthesizability ----
     synth = Synthesizability(
-        aizynth=aizynth, aizynth_config=aizynth_config,
-        syntheseus=syntheseus, syntheseus_inventory=syntheseus_inventory,
+        aizynth=aizynth,
+        aizynth_config=aizynth_config,
+        syntheseus=syntheseus,
+        syntheseus_inventory=syntheseus_inventory,
         syntheseus_model=syntheseus_model,
     )
     synth_results = synth(mols)
-    aizynth_solved = [r["aizynth_solved"] for r in synth_results if r["aizynth_solved"] is not None]
-    syntheseus_solved = [r["syntheseus_solved"] for r in synth_results if r["syntheseus_solved"] is not None]
+    aizynth_solved = [
+        r["aizynth_solved"] for r in synth_results if r["aizynth_solved"] is not None
+    ]
+    syntheseus_solved = [
+        r["syntheseus_solved"]
+        for r in synth_results
+        if r["syntheseus_solved"] is not None
+    ]
 
     return {
         "validity_%": validity,
@@ -232,10 +252,16 @@ def evaluate(
         "avg_qed": _mean(qed),
         "avg_sa_score": _mean(r["sa_score"] for r in synth_results),
         "avg_aizynth_score": _mean(r["aizynth_score"] for r in synth_results),
-        "aizynth_valid": (sum(1 for v in aizynth_solved if v) / total)
-        if (aizynth_solved and total) else None,
-        "syntheseus_valid": (sum(1 for v in syntheseus_solved if v) / total)
-        if (syntheseus_solved and total) else None,
+        "aizynth_valid": (
+            (sum(1 for v in aizynth_solved if v) / total)
+            if (aizynth_solved and total)
+            else None
+        ),
+        "syntheseus_valid": (
+            (sum(1 for v in syntheseus_solved if v) / total)
+            if (syntheseus_solved and total)
+            else None
+        ),
         "pb_valid": pb_valid,
         "avg_energy_per_atom": avg_energy_per_atom,
         "energy_per_atom": energy_per_atom,
@@ -283,26 +309,55 @@ def _read_inventory(paths: Optional[Sequence[str]]) -> Optional[List[str]]:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s"
+    )
     p = argparse.ArgumentParser(description="Evaluate generated molecules.")
-    p.add_argument("--input", required=True, help="SMILES CSV/file, SDF file/dir, or pickle of mols")
+    p.add_argument(
+        "--input",
+        required=True,
+        help="SMILES CSV/file, SDF file/dir, or pickle of mols",
+    )
     p.add_argument("--input_mode", choices=["smiles", "sdf", "pkl"], default="smiles")
     p.add_argument("--out_json", default="results.json")
     p.add_argument("--num_workers", type=int, default=8)
-    p.add_argument("--subsample", type=int, default=None, help="Randomly evaluate at most N molecules")
+    p.add_argument(
+        "--subsample",
+        type=int,
+        default=None,
+        help="Randomly evaluate at most N molecules",
+    )
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--xtb_versions", nargs="*", default=["mmff", "gfnff", "2"],
-                   help="Energy back-ends (mmff, gfnff, 0/1/2). Pass 'none' to skip energy.")
+    p.add_argument(
+        "--xtb_versions",
+        nargs="*",
+        default=["mmff", "gfnff", "2"],
+        help="Energy back-ends (mmff, gfnff, 0/1/2). Pass 'none' to skip energy.",
+    )
     p.add_argument("--xtb_path", default="xtb")
     p.add_argument("--diversity_thresh", type=float, default=0.65)
-    p.add_argument("--training_csv", help="Training-set CSV with a SMILES column (for novelty)")
-    p.add_argument("--posebuster", action="store_true", help="Compute PoseBusters validity (3D inputs)")
+    p.add_argument(
+        "--training_csv", help="Training-set CSV with a SMILES column (for novelty)"
+    )
+    p.add_argument(
+        "--posebuster",
+        action="store_true",
+        help="Compute PoseBusters validity (3D inputs)",
+    )
     p.add_argument("--aizynth", action="store_true")
     p.add_argument("--aizynth_config", help="AiZynthFinder YAML config")
     p.add_argument("--syntheseus", action="store_true")
-    p.add_argument("--syntheseus_inventory", nargs="*", default=None,
-                   help="CSV file(s) with a 'smiles' column of purchasable building blocks")
-    p.add_argument("--syntheseus_model", choices=["local_retro", "root_aligned"], default="local_retro")
+    p.add_argument(
+        "--syntheseus_inventory",
+        nargs="*",
+        default=None,
+        help="CSV file(s) with a 'smiles' column of purchasable building blocks",
+    )
+    p.add_argument(
+        "--syntheseus_model",
+        choices=["local_retro", "root_aligned"],
+        default="local_retro",
+    )
     args = p.parse_args()
 
     results = evaluate(
