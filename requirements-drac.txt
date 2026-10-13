@@ -1,0 +1,51 @@
+# SynCoGen deps for DRAC / Alliance clusters (virtualenv instead of conda).
+#
+# Install (see env.sh for a ready-made activation script):
+#   module load StdEnv/2023 python/3.11.5 rdkit/2024.03.5 cuda/12.6 xtb/6.7.1
+#   virtualenv --no-download ~/venvs/syncogen && source ~/venvs/syncogen/bin/activate
+#   pip install --no-index torch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1
+#   pip install -r requirements-drac.txt
+#   pip install --no-deps shepherd-score==1.0.0 && pip install open3d==0.18.0 py3Dmol
+#
+# Deviations from requirements.yaml:
+#   python 3.9      -> 3.11.5   (3.9 is not available as a module here)
+#   torch 2.2.2     -> 2.2.1    (no 2.2.2 build in the cluster wheelhouse)
+#   cuda-nvcc 12.4  -> module load cuda/12.6
+#   xtb 6.7.1       -> module load xtb/6.7.1   (conda-only on PyPI)
+#   rdkit 2024.3.5  -> module load rdkit/2024.03.5
+#                      The wheelhouse ships a dummy rdkit wheel that refuses to
+#                      install; the module must be loaded BEFORE activating the venv.
+#   rdkit-pypi 2022.9.5 dropped: collides with rdkit (same import name).
+#   datasets, timm, h5py dropped: never imported by the code, and `datasets`
+#                      drags in pyarrow, which is module-only here like rdkit.
+#   jupyter/notebook/nvitop/black/pre-commit dropped: not needed to train or sample.
+#   tqdm 4.67.3 -> 4.67.1 (4.67.3 does not exist on PyPI).
+#   shepherd-score installed with --no-deps so pip does not try to pull rdkit.
+
+torch_geometric==2.3.1
+lightning==2.2.1
+pytorch-lightning==2.2.1
+transformers==4.38.2
+lmdb==1.4.1
+
+hydra-core==1.3.2
+omegaconf==2.3.0
+gin-config==0.5.0
+
+networkx==3.2.1
+pandas==2.2.1
+einops==0.8.0
+fsspec==2024.2.0
+rich==13.7.1
+tqdm==4.67.1
+wandb==0.13.5
+ipdb==0.13.13
+
+# shepherd-score==1.0.0  -> install with --no-deps (see header), plus:
+open3d==0.18.0
+py3Dmol
+
+# Optional extras for syncogen.eval, each in its own venv (conflicting rdkit pins):
+#   pip install posebusters        # --posebuster
+#   pip install aizynthfinder      # --aizynth (also needs models + a config YAML)
+#   pip install "syntheseus[all]"  # --syntheseus (also needs a BB inventory)
