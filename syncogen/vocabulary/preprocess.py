@@ -68,46 +68,201 @@ def lazy_diverse_pick(
     return selected_bbs
 
 
-def get_smarts_reaction_centers(smarts: str):
-    """Return reaction-center indices and leaving flags for a SMARTS reaction."""
-    rxn = rdChemReactions.ReactionFromSmarts(smarts)
-    n_reactants = rxn.GetNumReactantTemplates()
+def validate_reaction_templates(templates):
+    """Return {smarts: reason} for every template RDKit cannot actually execute.
 
-    rtemps = [rxn.GetReactantTemplate(i) for i in range(n_reactants)]
+    `ReactionFromSmarts` happily parses a template whose atom-map numbers are
+    duplicated (e.g. `[S:10](=[O:15])=[O:15]`, both sulfonyl oxygens mapped :15),
+    and `IsInitialized()` is lazy so it reports False for valid templates too --
+    neither catches it. The failure only shows up later as
+    `ChemicalParserException: initMatchers() must be called before runReactants()`,
+    at which point the template silently yields no products for anything that tries
+    to run it (retrosynthesis checks, eval, validity scoring) while the assembly,
+    which never calls RunReactants, carries on using it.
+
+    `Validate()` is the reliable test, so use it, plus an explicit duplicate-map
+    check to give an actionable message.
+    """
+    import re
+    from collections import Counter
+
+    problems = {}
+    for smarts in templates:
+        rxn = rdChemReactions.ReactionFromSmarts(smarts)
+        if rxn is None:
+            problems[smarts] = "does not parse"
+            continue
+        dups = []
+        for side in smarts.split(">>"):
+            counts = Counter(int(m) for m in re.findall(r":(\d+)\]", side))
+            dups.extend(sorted(k for k, v in counts.items() if v > 1))
+        try:
+            n_warn, n_err = rxn.Validate(silent=True)
+        except Exception as exc:
+            problems[smarts] = f"Validate() raised: {exc}"
+            continue
+        if n_err:
+            msg = f"{n_err} validation error(s)"
+            if dups:
+                msg += f"; atom map number(s) {sorted(set(dups))} used more than once"
+            problems[smarts] = msg
+            continue
+        if dups:
+            problems[smarts] = (
+                f"atom map number(s) {sorted(set(dups))} used more than once"
+            )
+            continue
+
+        # RDKitMoleculeAssembly copies each fragment's internal bonds verbatim and
+        # only ADDS the new inter-fragment bond -- it cannot change the order of an
+        # existing bond. A template that saturates an alkene (Michael addition,
+        # C=C -> C-C) is therefore inexpressible: the assembly keeps the double bond,
+        # giving an over-valent carbon that fails sanitisation.
+        def _mapped_bonds(templates):
+            out = {}
+            for t in templates:
+                idx2map = {a.GetIdx(): a.GetAtomMapNum() for a in t.GetAtoms()}
+                for b in t.GetBonds():
+                    i = idx2map[b.GetBeginAtomIdx()]
+                    j = idx2map[b.GetEndAtomIdx()]
+                    if i > 0 and j > 0:
+                        out[frozenset((i, j))] = str(b.GetBondType())
+            return out
+
+        r_bonds = _mapped_bonds(
+            [rxn.GetReactantTemplate(i) for i in range(rxn.GetNumReactantTemplates())]
+        )
+        p_bonds = _mapped_bonds(
+            [rxn.GetProductTemplate(i) for i in range(rxn.GetNumProductTemplates())]
+        )
+        changed = [
+            f"{sorted(k)}: {v} -> {p_bonds[k]}"
+            for k, v in r_bonds.items()
+            if k in p_bonds and p_bonds[k] != v
+        ]
+        if changed:
+            problems[smarts] = (
+                "changes the order of a bond inside a fragment "
+                f"({'; '.join(changed)}); the assembly can only add the new "
+                "inter-fragment bond, so this reaction is inexpressible"
+            )
+    return problems
+
+
+def get_smarts_reaction_sites(smarts: str):
+    """Per reactant, return {"attach": idx, "leaving": [idx, ...]} in template-local
+    atom indices.
+
+    The previous implementation returned one (index, drop_flag) per reactant and
+    asserted exactly one reaction centre, which forbade reactions that remove
+    more than one atom. The CENTRE is now the ATTACHMENT atom
+    (the atom that forms the new inter-fragment bond and survives into the product)
+    rather than the leaving atom, which makes the attachment explicit instead of
+    recovering it at assembly time via `next(neighbors(...))` -- ambiguous as soon as
+    a leaving atom has degree > 1, which is exactly what boron's B(OH)2 introduces.
+    """
+    rxn = rdChemReactions.ReactionFromSmarts(smarts)
+    if rxn is None:
+        raise ValueError(f"unparseable SMARTS: {smarts}")
+    rtemps = [rxn.GetReactantTemplate(i) for i in range(rxn.GetNumReactantTemplates())]
     ptemps = [rxn.GetProductTemplate(i) for i in range(rxn.GetNumProductTemplates())]
 
-    # map-number → product atom
     prod_map = {}
-    for p in ptemps:
-        for atom in p.GetAtoms():
-            amap = atom.GetAtomMapNum()
-            if amap > 0:
-                prod_map[amap] = atom
+    for ptemp in ptemps:
+        for atom in ptemp.GetAtoms():
+            if atom.GetAtomMapNum() > 0:
+                prod_map[atom.GetAtomMapNum()] = atom
 
-    rc_per_reactant = []
+    sites = []
     for rtemp in rtemps:
-        centers = []
+        leaving, degree_changed = [], []
         for atom in rtemp.GetAtoms():
-            amap = atom.GetAtomMapNum()
-            r_idx = atom.GetIdx()
-            r_degree = atom.GetDegree()
+            amap, idx = atom.GetAtomMapNum(), atom.GetIdx()
+            if amap == 0 or amap not in prod_map:
+                leaving.append(idx)
+            elif atom.GetDegree() != prod_map[amap].GetDegree():
+                degree_changed.append(idx)
+        leaving_set = set(leaving)
 
-            # CASE 1: atom disappears
-            if amap not in prod_map:
-                centers.append((r_idx, True))
-                continue
+        adjacent = []
+        for li in leaving:
+            for nb in rtemp.GetAtomWithIdx(li).GetNeighbors():
+                j = nb.GetIdx()
+                if j not in leaving_set and j not in adjacent:
+                    adjacent.append(j)
 
-            # CASE 2: degree changes
-            p_atom = prod_map[amap]
-            p_degree = p_atom.GetDegree()
-            if r_degree != p_degree:
-                centers.append((r_idx, False))
-        rc_per_reactant.append(centers)
+        if len(degree_changed) == 1:
+            attach = degree_changed[0]
+        elif len(degree_changed) == 0 and len(adjacent) == 1:
+            attach = adjacent[0]
+        elif len(degree_changed) > 1:
+            inter = [d for d in degree_changed if d in adjacent]
+            if len(inter) != 1:
+                raise ValueError(
+                    f"ambiguous attachment: degree-changed={degree_changed} "
+                    f"adjacent-to-leaving={adjacent} in {smarts}"
+                )
+            attach = inter[0]
+        elif len(adjacent) > 1:
+            raise ValueError(f"ambiguous attachment: adjacent={adjacent} in {smarts}")
+        else:
+            raise ValueError(f"no attachment atom found in a reactant of {smarts}")
 
-    assert all(
-        len(rc) == 1 for rc in rc_per_reactant
-    ), f"Expected exactly 1 reaction center per reactant, got {rc_per_reactant} for {smarts}"
-    return [rc[0] for rc in rc_per_reactant]
+        if attach in leaving_set:
+            raise ValueError(f"attachment {attach} is also leaving in {smarts}")
+
+        kept = [a.GetIdx() for a in rtemp.GetAtoms() if a.GetIdx() not in leaving_set]
+        if kept:
+            seen, stack = {kept[0]}, [kept[0]]
+            while stack:
+                cur = stack.pop()
+                for nb in rtemp.GetAtomWithIdx(cur).GetNeighbors():
+                    j = nb.GetIdx()
+                    if j not in leaving_set and j not in seen:
+                        seen.add(j)
+                        stack.append(j)
+            if len(seen) != len(kept):
+                raise ValueError(
+                    f"removing the leaving set disconnects a reactant of {smarts}"
+                )
+        sites.append({"attach": attach, "leaving": sorted(leaving_set)})
+    return sites
+
+
+def bb_leaving_group(mol, rtemp, match, site):
+    """Map a template match onto a building block; return (attach_idx, leaving_idxs).
+
+    The template names only its own atoms, so `[c:2]-[B]` marks B as leaving but says
+    nothing about the two hydroxyls of a real B(OH)2. Everything reachable from a
+    matched leaving atom without passing through the attachment atom leaves with it.
+    """
+    attach_bb = match[site["attach"]]
+    seeds = [match[i] for i in site["leaving"] if i < len(match)]
+    leaving = set(seeds)
+    stack = list(seeds)
+    while stack:
+        cur = stack.pop()
+        for nb in mol.GetAtomWithIdx(cur).GetNeighbors():
+            j = nb.GetIdx()
+            if j != attach_bb and j not in leaving:
+                leaving.add(j)
+                stack.append(j)
+
+    # A leaving group must be PENDANT: exactly one bond may cross between the kept
+    # part and the leaving set. The template-level connectivity check is not enough,
+    # because a template like `[c:2]-[B]` has boron terminal while a real
+    # benzoxaborole has it inside a ring -- the flood-fill then travels around the
+    # ring and swallows the molecule (18 of 19 atoms, keeping one carbon). Returning
+    # None marks the (bb, reaction, centre) slot as not actually applicable.
+    if leaving:
+        crossing = 0
+        for a in leaving:
+            for nb in mol.GetAtomWithIdx(a).GetNeighbors():
+                if nb.GetIdx() not in leaving:
+                    crossing += 1
+        if crossing != 1:
+            return attach_bb, None
+    return attach_bb, sorted(leaving)
 
 
 def load_templates(path: Path, smarts_column: Optional[str] = None):
@@ -168,19 +323,6 @@ def load_bbs(path: Path, smiles_column: Optional[str] = None):
         return [line.strip() for line in f if line.strip()]
 
 
-def annotate_reactions(templates_path: Path):
-    """Annotate reaction templates with reaction centers."""
-    # Note: main() is responsible for calling load_templates with the correct
-    # column when reactions are provided as CSV. Here we only consume
-    # the already-loaded templates.
-    templates = load_templates(templates_path)
-    annotated_smarts = {
-        smarts: get_smarts_reaction_centers(smarts)
-        for smarts in tqdm(templates, desc="Annotating reaction SMARTS")
-    }
-    return templates, annotated_smarts
-
-
 def build_compatibility_and_bbs(
     bbs: list[str],
     templates: list[str],
@@ -195,6 +337,26 @@ def build_compatibility_and_bbs(
     annotated_bbs: dict[str, list[int]] = {}
     reaction_usage = {smarts: 0 for smarts in templates}
 
+    # Parse each reaction template ONCE. This used to sit inside the per-building-block
+    # loop, i.e. ReactionFromSmarts was called len(bbs) * len(templates) times
+    # (~4.8M times for a 64k x 75 vocabulary) when len(templates) parses suffice.
+    parsed_templates = []
+    for smarts in templates:
+        rxn = AllChem.ReactionFromSmarts(smarts)
+        reactants = rxn.GetReactants()
+        parsed_templates.append(
+            (
+                reactants[0] if len(reactants) > 0 else None,
+                reactants[1] if len(reactants) > 1 else None,
+            )
+        )
+
+    # int32 bitmask over building-block atom slots: bit a set => atom a leaves.
+    # Computed here because it needs the same substructure matches as compatibility.
+    leaving_mask = torch.zeros((num_bbs, num_rxns, max_centers), dtype=torch.int32)
+    non_pendant = 0
+    role_conflicts = []
+
     for i, smiles in enumerate(tqdm(bbs, desc="Building BB compatibilities")):
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
@@ -203,36 +365,59 @@ def build_compatibility_and_bbs(
         centers: list[int] = []
 
         for j, smarts in enumerate(templates):
-            rxn = AllChem.ReactionFromSmarts(smarts)
-            reactants = rxn.GetReactants()
-            r1 = reactants[0] if len(reactants) > 0 else None
-            r2 = reactants[1] if len(reactants) > 1 else None
+            r1, r2 = parsed_templates[j]
 
             any_comp_for_rxn = False
 
             if r1 is not None:
                 matches1 = mol.GetSubstructMatches(r1)
                 if matches1:
-                    rc_idx_r1, _ = annotated_smarts[smarts][0]
+                    site1 = annotated_smarts[smarts][0]
+                    rc_idx_r1 = site1["attach"]
                     for match in matches1:
                         atom_idx = match[rc_idx_r1]
                         if atom_idx not in centers:
                             centers.append(atom_idx)
                         center_idx = centers.index(atom_idx)
                         if center_idx < max_centers:
+                            _, leaving = bb_leaving_group(mol, r1, match, site1)
+                            if leaving is None:
+                                # non-pendant leaving group: template does not apply
+                                non_pendant += 1
+                                continue
+                            bits = 0
+                            for a in leaving:
+                                bits |= 1 << a
+                            prev = int(leaving_mask[i, j, center_idx])
+                            if prev and prev != bits:
+                                role_conflicts.append((smiles, j, center_idx))
+                            leaving_mask[i, j, center_idx] = bits
                             compatibility[i, j, center_idx] |= 1
                             any_comp_for_rxn = True
 
             if r2 is not None:
                 matches2 = mol.GetSubstructMatches(r2)
                 if matches2:
-                    rc_idx_r2, _ = annotated_smarts[smarts][1]
+                    site2 = annotated_smarts[smarts][1]
+                    rc_idx_r2 = site2["attach"]
                     for match in matches2:
                         atom_idx = match[rc_idx_r2]
                         if atom_idx not in centers:
                             centers.append(atom_idx)
                         center_idx = centers.index(atom_idx)
                         if center_idx < max_centers:
+                            _, leaving = bb_leaving_group(mol, r2, match, site2)
+                            if leaving is None:
+                                # non-pendant leaving group: template does not apply
+                                non_pendant += 1
+                                continue
+                            bits = 0
+                            for a in leaving:
+                                bits |= 1 << a
+                            prev = int(leaving_mask[i, j, center_idx])
+                            if prev and prev != bits:
+                                role_conflicts.append((smiles, j, center_idx))
+                            leaving_mask[i, j, center_idx] = bits
                             compatibility[i, j, center_idx] |= 2
                             any_comp_for_rxn = True
 
@@ -240,17 +425,35 @@ def build_compatibility_and_bbs(
                 reaction_usage[smarts] += 1
 
         if centers:
-            # Warn if we discovered more centers than we can store in the
-            # compatibility tensor for this BB.
+            # Truncate to max_centers so the stored centre list, the compatibility
+            # tensor and leaving.pt all have the same addressable range. Previously
+            # the full list was stored while the tensors had only max_centers slots,
+            # so RDKitMoleculeAssembly.all_open_reaction_centers() could yield a
+            # centre index that then raised IndexError against COMPATIBILITY.
             if len(centers) > max_centers:
                 print(
                     f"Warning: building block {smiles} has {len(centers)} reaction centers, "
-                    f"exceeding max_centers_per_bb={max_centers}; extra centers are ignored "
-                    f"in the compatibility tensor."
+                    f"exceeding max_centers_per_bb={max_centers}; extra centers are dropped."
                 )
+                centers = centers[:max_centers]
             annotated_bbs[smiles] = centers
 
-    return compatibility, annotated_bbs, reaction_usage
+    if non_pendant:
+        print(
+            f"Skipped {non_pendant} (bb, reaction, centre) slots whose leaving group is "
+            f"not pendant (leaving atom shares a ring with the attachment, so the "
+            f"template does not genuinely apply)."
+        )
+
+    if role_conflicts:
+        raise RuntimeError(
+            f"{len(role_conflicts)} (bb, reaction, centre) slots have different leaving "
+            f"groups depending on whether the BB acts as reactant 1 or 2 "
+            f"(e.g. {role_conflicts[:3]}). leaving_mask must become role-aware "
+            f"(shape [n_bb, n_rxn, n_centers, 2]) before this vocabulary can be used."
+        )
+
+    return compatibility, annotated_bbs, reaction_usage, leaving_mask
 
 
 def filter_bbs(
@@ -258,15 +461,22 @@ def filter_bbs(
     compatibility: torch.Tensor,
     annotated_bbs: dict[str, list[int]],
     keep_incompatible: bool,
+    leaving_mask: torch.Tensor = None,
 ):
-    """Filter building blocks without reaction centers if requested."""
+    """Filter building blocks without reaction centers if requested.
+
+    leaving_mask is row-indexed identically to compatibility and must be sliced in
+    lockstep, or atom bookkeeping silently decouples from the vocabulary indices.
+    """
     if keep_incompatible:
-        return bbs, compatibility, annotated_bbs
+        return bbs, compatibility, annotated_bbs, leaving_mask
 
     kept_bbs = list(annotated_bbs.keys())
     keep_indices = [i for i, smiles in enumerate(bbs) if smiles in annotated_bbs]
     compatibility = compatibility[keep_indices]
-    return kept_bbs, compatibility, annotated_bbs
+    if leaving_mask is not None:
+        leaving_mask = leaving_mask[keep_indices]
+    return kept_bbs, compatibility, annotated_bbs, leaving_mask
 
 
 def filter_reactions(
@@ -275,10 +485,11 @@ def filter_reactions(
     compatibility: torch.Tensor,
     reaction_usage: dict[str, int],
     keep_incompatible: bool,
+    leaving_mask: torch.Tensor = None,
 ):
     """Filter reactions incompatible with all BBs if requested."""
     if keep_incompatible:
-        return templates, annotated_smarts, compatibility
+        return templates, annotated_smarts, compatibility, leaving_mask
 
     keep_rxn_indices = [
         j for j, smarts in enumerate(templates) if reaction_usage.get(smarts, 0) > 0
@@ -288,7 +499,9 @@ def filter_reactions(
         smarts: annotated_smarts[smarts] for smarts in filtered_templates
     }
     compatibility = compatibility[:, keep_rxn_indices, :]
-    return filtered_templates, filtered_annotations, compatibility
+    if leaving_mask is not None:
+        leaving_mask = leaving_mask[:, keep_rxn_indices, :]
+    return filtered_templates, filtered_annotations, compatibility, leaving_mask
 
 
 def filter_bbs_by_properties(
@@ -375,11 +588,23 @@ def write_vocab_jsons(
     )
 
     reactions_out = {}
-    for idx, (smarts, centers_info) in enumerate(annotated_smarts.items()):
-        drop_bools = [bool(rc[1]) for rc in centers_info]
+    for idx, (smarts, sites) in enumerate(annotated_smarts.items()):
+        # drop_bools is retained so older vocabularies/readers keep working, but it is
+        # now derived from the leaving sets and is no longer the source of truth --
+        # leaving.pt is (it carries per-BB leaving groups, which drop_bools cannot).
+        drop_bools = [len(site["leaving"]) > 0 for site in sites]
+        n_leaving = [len(site["leaving"]) for site in sites]
+        attach = [site["attach"] for site in sites]
         while len(drop_bools) < 2:
             drop_bools.append(False)
-        reactions_out[smarts] = {"drop_bools": drop_bools, "index": idx}
+            n_leaving.append(0)
+            attach.append(-1)
+        reactions_out[smarts] = {
+            "drop_bools": drop_bools,
+            "n_leaving_template": n_leaving,
+            "attach_template": attach,
+            "index": idx,
+        }
 
     (out_dir / "reactions.json").write_text(json.dumps(reactions_out, indent=2))
     return building_blocks_out
@@ -577,6 +802,14 @@ def main():
         help="If set, skip property-based filtering of building blocks.",
     )
     parser.add_argument(
+        "--allow_invalid_reactions",
+        action="store_true",
+        help=(
+            "Drop reaction templates that RDKit cannot execute instead of failing. "
+            "By default preprocessing aborts and lists them."
+        ),
+    )
+    parser.add_argument(
         "--no_substructure_filtering",
         action="store_true",
         help="If set, skip unwanted substructure filtering (PAINS, Brenk, etc.) of building blocks.",
@@ -591,8 +824,21 @@ def main():
     print("Annotating reactions...")
     # If reactions are provided as CSV, require rxn_smarts_column.
     templates = load_templates(rxn_path, smarts_column=args.rxn_smarts_column)
+    invalid = validate_reaction_templates(templates)
+    if invalid:
+        print(f"{len(invalid)} of {len(templates)} reaction templates are invalid:")
+        for smarts, reason in invalid.items():
+            print(f"  - {reason}\n      {smarts[:110]}")
+        if not args.allow_invalid_reactions:
+            raise SystemExit(
+                "Refusing to build a vocabulary from templates RDKit cannot execute. "
+                "Repair them, or pass --allow_invalid_reactions to drop them."
+            )
+        templates = [t for t in templates if t not in invalid]
+        print(f"Dropped them; {len(templates)} templates remain.")
+
     annotated_smarts = {
-        smarts: get_smarts_reaction_centers(smarts) for smarts in templates
+        smarts: get_smarts_reaction_sites(smarts) for smarts in templates
     }
     (out_dir / "templates_annotated.json").write_text(
         json.dumps(annotated_smarts, indent=2)
@@ -642,33 +888,38 @@ def main():
 
     print("Annotating building blocks and constructing compatibility tensor...")
     max_centers = int(args.max_centers_per_bb)
-    compatibility, annotated_bbs, reaction_usage = build_compatibility_and_bbs(
-        bbs=bbs,
-        templates=templates,
-        annotated_smarts=annotated_smarts,
-        max_centers=max_centers,
+    compatibility, annotated_bbs, reaction_usage, leaving_mask = (
+        build_compatibility_and_bbs(
+            bbs=bbs,
+            templates=templates,
+            annotated_smarts=annotated_smarts,
+            max_centers=max_centers,
+        )
     )
 
     print("Filtering building blocks...")
-    bbs, compatibility, annotated_bbs = filter_bbs(
+    bbs, compatibility, annotated_bbs, leaving_mask = filter_bbs(
         bbs=bbs,
         compatibility=compatibility,
         annotated_bbs=annotated_bbs,
         keep_incompatible=args.keep_incompatible,
+        leaving_mask=leaving_mask,
     )
     print(f"Remaining building blocks after filtering: {len(bbs)}")
 
     (out_dir / "smiles_annotated.json").write_text(json.dumps(annotated_bbs, indent=2))
     torch.save(compatibility, out_dir / "compatibility.pt")
 
-    templates, annotated_smarts, compatibility = filter_reactions(
+    templates, annotated_smarts, compatibility, leaving_mask = filter_reactions(
         templates=templates,
         annotated_smarts=annotated_smarts,
         compatibility=compatibility,
         reaction_usage=reaction_usage,
         keep_incompatible=args.keep_incompatible,
+        leaving_mask=leaving_mask,
     )
     torch.save(compatibility, out_dir / "compatibility.pt")
+    torch.save(leaving_mask, out_dir / "leaving.pt")
     (out_dir / "templates_annotated.json").write_text(
         json.dumps(annotated_smarts, indent=2)
     )
@@ -689,6 +940,17 @@ def main():
     )
     torch.save(fragment_features, out_dir / "fragment_features.pt")
     meta["max_centers_per_bb"] = max_centers
+    # Presence of these fields is how constants.py feature-detects the new
+    # attachment-centred convention; without them it falls back to the legacy
+    # drop_bools path so existing vocabularies and checkpoints keep working.
+    meta["centre_convention"] = "attachment"
+    meta["has_leaving_masks"] = True
+    nz = leaving_mask != 0
+    meta["max_leaving_atoms"] = int(
+        max(
+            (int(v).bit_count() for v in leaving_mask[nz].flatten().tolist()), default=0
+        )
+    )
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
 
     num_bbs = len(bbs)

@@ -25,6 +25,12 @@ REACTIONS = None
 N_REACTIONS = None
 N_CENTERS = None
 COMPATIBILITY = None
+# int32[n_bb, n_rxn, n_centers] bitmask over BB atom slots: bit a set => atom a is
+# removed when that BB reacts at that centre. None for vocabularies built before the
+# multi-atom-drop refactor, which is how the legacy code path is selected.
+LEAVING_MASK = None
+# "attachment" (new) or "leaving" (legacy): which atom a reaction centre refers to.
+CENTRE_CONVENTION = "leaving"
 
 
 def load_vocabulary(vocab_dir: Path) -> Dict[str, Any]:
@@ -35,6 +41,7 @@ def load_vocabulary(vocab_dir: Path) -> Dict[str, Any]:
     global FRAGMENT_MACCS, FRAGMENT_ATOMFEATS, FRAGMENT_BONDFEATS, FRAGMENT_ATOMADJ
     global ATOM_TYPES, N_ATOM_FEATURES, N_BOND_FEATURES
     global REACTIONS, N_REACTIONS, N_CENTERS, COMPATIBILITY
+    global LEAVING_MASK, CENTRE_CONVENTION
 
     vocab_dir = Path(vocab_dir)
 
@@ -68,6 +75,14 @@ def load_vocabulary(vocab_dir: Path) -> Dict[str, Any]:
     compatibility = compatibility[:n_building_blocks, :n_reactions]
     n_centers = compatibility.shape[2]
 
+    leaving_path = vocab_dir / "leaving.pt"
+    leaving_mask = None
+    if leaving_path.exists():
+        leaving_mask = torch.load(leaving_path)
+        assert leaving_mask.dim() == 3, "leaving.pt must be 3D [n_bb, n_rxn, n_centers]"
+        # sliced exactly like compatibility so indices stay aligned
+        leaving_mask = leaving_mask[:n_building_blocks, :n_reactions]
+
     frag_path = vocab_dir / "fragment_features.pt"
     meta_path = vocab_dir / "meta.json"
     frag = torch.load(frag_path)
@@ -99,6 +114,10 @@ def load_vocabulary(vocab_dir: Path) -> Dict[str, Any]:
         "N_REACTIONS": n_reactions,
         "N_CENTERS": n_centers,
         "COMPATIBILITY": compatibility,
+        "LEAVING_MASK": leaving_mask,
+        "CENTRE_CONVENTION": meta.get(
+            "centre_convention", "attachment" if leaving_mask is not None else "leaving"
+        ),
     }
 
     BUILDING_BLOCKS = _VOCAB["BUILDING_BLOCKS"]
@@ -117,6 +136,13 @@ def load_vocabulary(vocab_dir: Path) -> Dict[str, Any]:
     N_REACTIONS = _VOCAB["N_REACTIONS"]
     N_CENTERS = _VOCAB["N_CENTERS"]
     COMPATIBILITY = _VOCAB["COMPATIBILITY"]
+    LEAVING_MASK = _VOCAB["LEAVING_MASK"]
+    CENTRE_CONVENTION = _VOCAB["CENTRE_CONVENTION"]
+    if LEAVING_MASK is not None and CENTRE_CONVENTION != "attachment":
+        raise ValueError(
+            f"{vocab_dir} has leaving.pt but centre_convention="
+            f"{CENTRE_CONVENTION!r}; refusing to mix conventions"
+        )
 
     return _VOCAB
 

@@ -4,6 +4,7 @@ from typing import List, Optional
 import networkx as nx
 from rdkit import Chem
 
+import syncogen.constants.constants as _constants
 from syncogen.constants.constants import (
     BUILDING_BLOCKS_SMI_TO_IDX,
     BUILDING_BLOCKS_IDX_TO_SMI,
@@ -32,39 +33,64 @@ class FragmentInstance:
         self.atom_graph = nx.Graph()
         self._build_graph()
 
+    _TEMPLATE_CACHE = {}
+
+    @classmethod
+    def _template(cls, smiles):
+        """Per-SMILES atom/bond attribute template.
+
+        _build_graph used to call MolFromSmiles + AssignStereochemistry on every
+        FragmentInstance construction, i.e. on every DFS branch. Building blocks
+        come from a fixed vocabulary, so parse each one once.
+        """
+        t = cls._TEMPLATE_CACHE.get(smiles)
+        if t is None:
+            mol = Chem.MolFromSmiles(smiles)
+            if not mol:
+                raise ValueError(f"Invalid SMILES: {smiles}")
+            Chem.AssignStereochemistry(mol, force=True, cleanIt=True)
+            atoms = [
+                (
+                    atom.GetIdx(),
+                    {
+                        "symbol": atom.GetSymbol(),
+                        "formal_charge": atom.GetFormalCharge(),
+                        "is_aromatic": atom.GetIsAromatic(),
+                        "num_explicit_hs": atom.GetNumExplicitHs(),
+                        "chirality": atom.GetChiralTag().name,
+                        "is_chiral_center": atom.HasProp("_ChiralityPossible"),
+                    },
+                )
+                for atom in mol.GetAtoms()
+            ]
+            bonds = [
+                (
+                    bond.GetBeginAtomIdx(),
+                    bond.GetEndAtomIdx(),
+                    {
+                        "bond_order": bond.GetBondTypeAsDouble(),
+                        "is_aromatic": bond.GetIsAromatic(),
+                        # The reference atoms must travel with the stereo or
+                        # SetStereo is a no-op.
+                        "bond_stereo": bond.GetStereo().name,
+                        "stereo_atoms": list(bond.GetStereoAtoms()),
+                    },
+                )
+                for bond in mol.GetBonds()
+            ]
+            t = (atoms, bonds)
+            cls._TEMPLATE_CACHE[smiles] = t
+        return t
+
     def _build_graph(self):
-        mol = Chem.MolFromSmiles(self.smiles)
-        if not mol:
-            raise ValueError(f"Invalid SMILES: {self.smiles}")
-
-        # Ensure stereochemistry is properly assigned
-        Chem.AssignStereochemistry(mol, force=True, cleanIt=True)
-
-        # Add atoms with stereochemistry
-        for atom in mol.GetAtoms():
-            unique_id = (atom.GetIdx(), self.frag_order)
+        atoms, bonds = FragmentInstance._template(self.smiles)
+        fo = self.frag_order
+        for idx, attrs in atoms:
             self.atom_graph.add_node(
-                unique_id,
-                frag_order=self.frag_order,
-                global_frag_id=self.global_frag_id,
-                symbol=atom.GetSymbol(),
-                formal_charge=atom.GetFormalCharge(),
-                is_aromatic=atom.GetIsAromatic(),
-                num_explicit_hs=atom.GetNumExplicitHs(),
-                chirality=atom.GetChiralTag().name,
-                is_chiral_center=atom.HasProp("_ChiralityPossible"),
+                (idx, fo), frag_order=fo, global_frag_id=self.global_frag_id, **attrs
             )
-
-        # Add bonds with stereochemistry
-        for bond in mol.GetBonds():
-            start_id = (bond.GetBeginAtomIdx(), self.frag_order)
-            end_id = (bond.GetEndAtomIdx(), self.frag_order)
-            self.atom_graph.add_edge(
-                start_id,
-                end_id,
-                bond_order=bond.GetBondTypeAsDouble(),
-                is_aromatic=bond.GetIsAromatic(),
-            )
+        for i, j, battrs in bonds:
+            self.atom_graph.add_edge((i, fo), (j, fo), **battrs)
 
 
 @dataclass
@@ -216,21 +242,52 @@ class RDKitMoleculeAssembly:
         attachpt_a = (rc_self, self_frag_order)
         attachpt_b = (rc_other, new_frag_order)
 
-        # do we drop an atom on either side?
-        leaving_group_self, leaving_group_other = REACTIONS[reaction]["drop_bools"]
-
-        # add the new fragment atoms to the atom graph
+        # Must compose before removing the new fragment's leaving atoms: they do
+        # not exist in self.atom_graph until now.
         self.atom_graph = nx.compose(self.atom_graph, new_fragment_instance.atom_graph)
 
-        if leaving_group_self:
-            old_attachpt_a = attachpt_a
-            attachpt_a = next(self.atom_graph.neighbors(attachpt_a))
-            self.atom_graph.remove_node(old_attachpt_a)
+        if _constants.LEAVING_MASK is None:
+            # ---- legacy vocabulary: the centre IS the single leaving atom, and the
+            # attachment is recovered from its only neighbour. Ambiguous when that
+            # atom has degree > 1, which is why the new path exists.
+            leaving_group_self, leaving_group_other = REACTIONS[reaction]["drop_bools"]
 
-        if leaving_group_other:
-            old_attachpt_b = attachpt_b
-            attachpt_b = next(self.atom_graph.neighbors(attachpt_b))
-            self.atom_graph.remove_node(old_attachpt_b)
+            if leaving_group_self:
+                old_attachpt_a = attachpt_a
+                attachpt_a = next(self.atom_graph.neighbors(attachpt_a))
+                self.atom_graph.remove_node(old_attachpt_a)
+
+            if leaving_group_other:
+                old_attachpt_b = attachpt_b
+                attachpt_b = next(self.atom_graph.neighbors(attachpt_b))
+                self.atom_graph.remove_node(old_attachpt_b)
+        else:
+            # ---- new vocabulary: the centres already ARE the attachment atoms, so
+            # attachpt_a/b stand. Remove the full per-building-block leaving groups,
+            # which may be several atoms (B(OH)2 -> 3, pinacol boronate -> 9).
+            reaction_idx = REACTIONS[reaction]["index"]
+            for smiles, frag_order, center_idx in (
+                (
+                    self_fragment_instance.smiles,
+                    self_frag_order,
+                    self_reaction_center_idx,
+                ),
+                (
+                    new_fragment_instance.smiles,
+                    new_frag_order,
+                    other_reaction_center_idx,
+                ),
+            ):
+                bb_idx = BUILDING_BLOCKS_SMI_TO_IDX[smiles]["index"]
+                bits = int(_constants.LEAVING_MASK[bb_idx, reaction_idx, center_idx])
+                a = 0
+                while bits:
+                    if bits & 1:
+                        node = (a, frag_order)
+                        if self.atom_graph.has_node(node):
+                            self.atom_graph.remove_node(node)
+                    bits >>= 1
+                    a += 1
 
         self.atom_graph.add_edge(attachpt_a, attachpt_b, bond_order=1.0)
 
@@ -256,20 +313,58 @@ class RDKitMoleculeAssembly:
             atom.SetIntProp("global_frag_id", data["global_frag_id"])
             atom.SetFormalCharge(data.get("formal_charge"))
             atom.SetNumExplicitHs(data.get("num_explicit_hs", 0))
-            # Set chirality from graph data
-            if data.get("is_chiral_center"):
-                atom.SetChiralTag(getattr(Chem.ChiralType, data["chirality"]))
+            # Gate on the recorded tag, NOT on HasProp("_ChiralityPossible"):
+            # AssignStereochemistry(cleanIt=True) sets that on unspecified-but-possible
+            # centres, so a specified [C@@H] fails it precisely when it matters.
+            chir = data.get("chirality")
+            if chir and chir != "CHI_UNSPECIFIED":
+                atom.SetChiralTag(getattr(Chem.ChiralType, chir))
             node_to_idx[node] = atom_idx
 
         # Add bonds between atoms, preserving bond orders and stereochemistry
+        pending_stereo = []
         for u, v, data in self.atom_graph.edges(data=True):
             bond_type = data.get("bond_order")
             mol.AddBond(node_to_idx[u], node_to_idx[v], BOND_TYPE_MAP[bond_type])
             bond = mol.GetBondBetweenAtoms(node_to_idx[u], node_to_idx[v])
 
-            # Set bond stereochemistry from graph data
-            if data.get("bond_stereo"):
-                bond.SetStereo(getattr(Chem.BondStereo, data["bond_stereo"]))
+            # Bond stereo is deferred: SetStereoAtoms requires the reference atoms
+            # to already be bonded, and the begin/end order can flip relative to the
+            # source fragment, so it cannot be applied while bonds are still going in.
+            bs = data.get("bond_stereo")
+            if bs and bs != "STEREONONE":
+                sa = data.get("stereo_atoms") or []
+                frag = self.atom_graph.nodes[u].get("frag_order")
+                mapped = [
+                    node_to_idx[(a, frag)] for a in sa if (a, frag) in node_to_idx
+                ]
+                if len(mapped) == 2:
+                    pending_stereo.append(
+                        (node_to_idx[u], node_to_idx[v], mapped[0], mapped[1], bs)
+                    )
+
+        # Apply deferred bond stereo now that every bond exists. The two reference
+        # atoms must be given in (begin-side, end-side) order for THIS molecule, which
+        # may be the reverse of the source fragment's, so resolve by adjacency.
+        for a_idx, b_idx, s1, s2, bs in pending_stereo:
+            bond = mol.GetBondBetweenAtoms(a_idx, b_idx)
+            if bond is None:
+                continue
+            bi, ei = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+            if (
+                mol.GetBondBetweenAtoms(bi, s1) is not None
+                and mol.GetBondBetweenAtoms(ei, s2) is not None
+            ):
+                pair = (s1, s2)
+            elif (
+                mol.GetBondBetweenAtoms(bi, s2) is not None
+                and mol.GetBondBetweenAtoms(ei, s1) is not None
+            ):
+                pair = (s2, s1)
+            else:
+                continue
+            bond.SetStereoAtoms(*pair)
+            bond.SetStereo(getattr(Chem.BondStereo, bs))
 
         # Validate molecular structure while preserving aromaticity
         if sanitize:
@@ -277,6 +372,18 @@ class RDKitMoleculeAssembly:
                 Chem.SanitizeMol(mol)
             except:
                 print("Warning: Molecule could not be sanitized")
+
+        # Setting bond stereo alone is not enough for the SMILES writer to emit
+        # / and \: the neighbouring single bonds need directions derived from it.
+        if pending_stereo:
+            try:
+                Chem.SetBondStereoFromDirections(mol)
+            except Exception:
+                pass
+            try:
+                Chem.SetDoubleBondNeighborDirections(mol)
+            except Exception:
+                pass
 
         return mol
 
@@ -294,11 +401,23 @@ class RDKitMoleculeAssembly:
         ]
 
     def copy(self):
+        """Copy the assembly for DFS branching.
+
+        copy.deepcopy recursed into every node's FragmentInstance (each of which
+        owns an nx atom graph), costing ~13k deepcopy calls per molecule. A
+        FragmentInstance is immutable once built, so it is shared; the only
+        mutable per-assembly node state is rxn_center_available. Atom/edge
+        attributes are scalars, so nx's own structural copy is sufficient.
         """
-        Return a deep copy of the molecule fragment graph, including both
-        the fragment graph and atom graph.
-        """
+        fg = nx.Graph()
+        for node_id, data in self.fragment_graph.nodes(data=True):
+            d = dict(data)
+            rca = d.get("rxn_center_available")
+            if rca is not None:
+                d["rxn_center_available"] = list(rca)
+            fg.add_node(node_id, **d)
+        fg.add_edges_from(self.fragment_graph.edges(data=True))
         return RDKitMoleculeAssembly(
-            fragment_graph=copy.deepcopy(self.fragment_graph),
-            atom_graph=copy.deepcopy(self.atom_graph),
+            fragment_graph=fg,
+            atom_graph=self.atom_graph.copy(),
         )

@@ -24,6 +24,7 @@ from syncogen.api.ops.graph_ops import (
     rxn_tuple_to_onehot,
     compute_compatibility_masks,
 )
+import syncogen.constants.constants as _constants
 from syncogen.constants.constants import (
     MAX_ATOMS_PER_BB,
     N_CENTERS,
@@ -431,20 +432,30 @@ class BBRxnGraph:
 
             for b in range(self.batch_size):
                 for reaction in self.reactions[b]:
-                    node1_order = reaction.node1_idx
-                    node2_order = reaction.node2_idx
-                    center1_idx = reaction.center1_idx
-                    center2_idx = reaction.center2_idx
-                    if reaction.r1_atom_dropped:
-                        r1_atom_idx = self.building_blocks[b][node1_order].get_atom_idx(
-                            center1_idx
+                    if reaction.is_mask:
+                        continue
+                    for node_order, center_idx, dropped in (
+                        (
+                            reaction.node1_idx,
+                            reaction.center1_idx,
+                            reaction.r1_atom_dropped,
+                        ),
+                        (
+                            reaction.node2_idx,
+                            reaction.center2_idx,
+                            reaction.r2_atom_dropped,
+                        ),
+                    ):
+                        bb = self.building_blocks[b][node_order]
+                        leaving = bb.get_leaving_atoms(
+                            reaction.reaction_idx, center_idx
                         )
-                        mask[b, node1_order, r1_atom_idx] = False
-                    if reaction.r2_atom_dropped:
-                        r2_atom_idx = self.building_blocks[b][node2_order].get_atom_idx(
-                            center2_idx
-                        )
-                        mask[b, node2_order, r2_atom_idx] = False
+                        if leaving is None:
+                            if dropped:
+                                mask[b, node_order, bb.get_atom_idx(center_idx)] = False
+                        else:
+                            for a in leaving:
+                                mask[b, node_order, a] = False
 
                 for i in range(n_bbs):
                     n_atoms = self.building_blocks[b][i].num_atoms
@@ -462,18 +473,20 @@ class BBRxnGraph:
         mask = torch.ones(n_bbs, MAX_ATOMS_PER_BB, dtype=torch.bool, device=self.device)
 
         for reaction in self.reactions:
-            node1_order, node2_order = reaction.node1_idx, reaction.node2_idx
-            center1_idx, center2_idx = reaction.center1_idx, reaction.center2_idx
-            if reaction.r1_atom_dropped:
-                r1_atom_idx = self.building_blocks[node1_order].get_atom_idx(
-                    center1_idx
-                )
-                mask[node1_order, r1_atom_idx] = False
-            if reaction.r2_atom_dropped:
-                r2_atom_idx = self.building_blocks[node2_order].get_atom_idx(
-                    center2_idx
-                )
-                mask[node2_order, r2_atom_idx] = False
+            if reaction.is_mask:
+                continue
+            for node_order, center_idx, dropped in (
+                (reaction.node1_idx, reaction.center1_idx, reaction.r1_atom_dropped),
+                (reaction.node2_idx, reaction.center2_idx, reaction.r2_atom_dropped),
+            ):
+                bb = self.building_blocks[node_order]
+                leaving = bb.get_leaving_atoms(reaction.reaction_idx, center_idx)
+                if leaving is None:
+                    if dropped:
+                        mask[node_order, bb.get_atom_idx(center_idx)] = False
+                else:
+                    for a in leaving:
+                        mask[node_order, a] = False
 
         for i in range(n_bbs):
             n_atoms = self.building_blocks[i].num_atoms
@@ -684,18 +697,24 @@ class BBRxnGraph:
             atom1_global = center1_atom_local + reaction.node1_idx * MAX_ATOMS_PER_BB
             atom2_global = center2_atom_local + reaction.node2_idx * MAX_ATOMS_PER_BB
 
-            # If an atom is dropped, use its neighbor instead
-            if reaction.r1_atom_dropped:
-                atom = bb1.mol.GetAtomWithIdx(center1_atom_local)
-                neighbor = atom.GetNeighbors()[
-                    0
-                ]  # First neighbor (leaving group removed)
-                atom1_global = neighbor.GetIdx() + reaction.node1_idx * MAX_ATOMS_PER_BB
+            # Under the "attachment" convention the centre already IS the atom that
+            # forms the inter-fragment bond, so nothing needs resolving. The legacy
+            # path has to guess via neighbors[0], which is ambiguous whenever the
+            # leaving atom has degree > 1 (e.g. the B of a boronic acid).
+            if _constants.LEAVING_MASK is None:
+                if reaction.r1_atom_dropped:
+                    atom = bb1.mol.GetAtomWithIdx(center1_atom_local)
+                    neighbor = atom.GetNeighbors()[0]
+                    atom1_global = (
+                        neighbor.GetIdx() + reaction.node1_idx * MAX_ATOMS_PER_BB
+                    )
 
-            if reaction.r2_atom_dropped:
-                atom = bb2.mol.GetAtomWithIdx(center2_atom_local)
-                neighbor = atom.GetNeighbors()[0]
-                atom2_global = neighbor.GetIdx() + reaction.node2_idx * MAX_ATOMS_PER_BB
+                if reaction.r2_atom_dropped:
+                    atom = bb2.mol.GetAtomWithIdx(center2_atom_local)
+                    neighbor = atom.GetNeighbors()[0]
+                    atom2_global = (
+                        neighbor.GetIdx() + reaction.node2_idx * MAX_ATOMS_PER_BB
+                    )
 
             # Reaction bonds are single bonds
             bonds.append((atom1_global, atom2_global, Chem.BondType.SINGLE))
