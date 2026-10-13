@@ -23,7 +23,12 @@ import queue
 # Add syncogen to path for testing
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import syncogen.constants.constants as constants
 from syncogen.constants.constants import load_vocabulary
+
+# Must stay at module scope: enumerate_possible_actions() uses it, and binding it
+# only inside the __main__ block breaks every library caller of this module.
+from syncogen.utils.rdkit import get_lipinski_descriptors
 
 
 def precompute_compatibility_lookups(
@@ -49,6 +54,48 @@ def precompute_compatibility_lookups(
             r2_lookup[rxn_idx] = (other_idxs.tolist(), oc_idxs.tolist())
 
     return r1_lookup, r2_lookup
+
+
+import os as _os
+
+# Candidate actions tried per step. The sampler consumes only the first
+# acceptable one, so there is no reason to order the whole list.
+MAX_CANDIDATES = int(_os.environ.get("SYNCOGEN_MAX_CANDIDATES", "32"))
+# max_mol_weight is not a CLI argument; this makes it settable without one.
+MAX_MOL_WEIGHT = float(_os.environ.get("SYNCOGEN_MAX_MW", "650"))
+
+_BB_DESC_ARR = None
+_R2_ARR = {}
+_FIRST_VALID = {}
+
+# Per-worker generation counters, printed on worker exit. The accept/reject gate
+# in _generate_one_molecule is otherwise silent about what it discarded.
+from collections import Counter as _Counter
+
+_STATS = _Counter()
+
+
+def _bb_desc_arrays(bb_descriptors):
+    """(MW, HBD, HBA) as numpy arrays indexed by building-block index."""
+    global _BB_DESC_ARR
+    if _BB_DESC_ARR is None or _BB_DESC_ARR[0].shape[0] != len(bb_descriptors):
+        _BB_DESC_ARR = (
+            np.asarray([d["MW"] for d in bb_descriptors], dtype=np.float64),
+            np.asarray([d["HBD"] for d in bb_descriptors], dtype=np.float64),
+            np.asarray([d["HBA"] for d in bb_descriptors], dtype=np.float64),
+        )
+    return _BB_DESC_ARR
+
+
+def _r2_arrays(rxn_idx, other_idxs, oc_idxs):
+    a = _R2_ARR.get(rxn_idx)
+    if a is None:
+        a = (
+            np.asarray(other_idxs, dtype=np.int64),
+            np.asarray(oc_idxs, dtype=np.int64),
+        )
+        _R2_ARR[rxn_idx] = a
+    return a
 
 
 def lipinski_mask(
@@ -81,20 +128,27 @@ def enumerate_possible_actions(
     r2_lookup: Dict[int, Tuple[List[int], List[int]]],
     bb_descriptors: List[dict],
     n_building_blocks: int,
-    max_mol_weight: float = 650.0,
+    max_mol_weight: float = None,
     max_mol_hbd: int = 5,
     max_mol_hba: int = 10,
     sample_by_inverse_molwt: bool = False,
 ):
+    if max_mol_weight is None:
+        max_mol_weight = MAX_MOL_WEIGHT
     if molecule.num_fragments() == 0:
-        lipinski_valid = lipinski_mask(
-            bb_descriptors,
-            {"MW": 0.0, "HBD": 0, "HBA": 0},
-            max_mol_weight,
-            max_mol_hbd,
-            max_mol_hba,
-        )
-        valid_indices = [i for i in range(n_building_blocks) if lipinski_valid[i]]
+        # Depends only on the caps, not on the molecule, so cache it.
+        ck = (n_building_blocks, max_mol_weight, max_mol_hbd, max_mol_hba)
+        valid_indices = _FIRST_VALID.get(ck)
+        if valid_indices is None:
+            lipinski_valid = lipinski_mask(
+                bb_descriptors,
+                {"MW": 0.0, "HBD": 0, "HBA": 0},
+                max_mol_weight,
+                max_mol_hbd,
+                max_mol_hba,
+            )
+            valid_indices = [i for i in range(n_building_blocks) if lipinski_valid[i]]
+            _FIRST_VALID[ck] = valid_indices
 
         if sample_by_inverse_molwt:
             return [(valid_indices, [bb_descriptors[i]["MW"] for i in valid_indices])]
@@ -112,36 +166,23 @@ def enumerate_possible_actions(
         for frag_order in molecule.fragment_graph.nodes
     ]
 
-    descriptors_frag = get_lipinski_descriptors(
-        [
-            Chem.MolFromSmiles(frag_smiles)
-            for _, frag_smiles, _ in frags_and_availability
-        ]
-    )
-
     try:
         descriptors_current = get_lipinski_descriptors(molecule.to_mol(sanitize=True))
     except Exception as e:
         print("Molecule could not be sanitized")
         return []
 
-    lipinski_valid = lipinski_mask(
-        descriptors_frag, descriptors_current, max_mol_weight, max_mol_hbd, max_mol_hba
-    )
-    frags_and_availability = [
-        frags_and_availability[i]
-        for i in range(len(frags_and_availability))
-        if lipinski_valid[i]
-    ]
-    descriptors_frag = [
-        descriptors_frag[i] for i in range(len(descriptors_frag)) if lipinski_valid[i]
-    ]
+    # The cap applies to the building block being ADDED, not to the host fragment
+    # it attaches to; the per-candidate test is in the loop below.
+    cur_mw = float(descriptors_current["MW"])
+    cur_hbd = float(descriptors_current["HBD"])
+    cur_hba = float(descriptors_current["HBA"])
+    bb_mw, bb_hbd, bb_hba = _bb_desc_arrays(bb_descriptors)
 
     for idx, (frag_order, frag_smiles, center_availability) in enumerate(
         frags_and_availability
     ):
         frag_idx = constants.BUILDING_BLOCKS_SMI_TO_IDX[frag_smiles]["index"]
-        frag_molwt = descriptors_frag[idx]["MW"]
 
         for cidx, is_open in enumerate(center_availability):
             if not is_open:
@@ -157,18 +198,26 @@ def enumerate_possible_actions(
                     continue
                 other_idxs, oc_idxs = partners
 
-                for other_idx, oc in zip(other_idxs, oc_idxs):
-                    action = [
-                        other_idx,
-                        rxn_idx,
-                        frag_order,
-                        cidx,
-                        oc,
-                    ]
-                    if sample_by_inverse_molwt:
-                        results.append((action, frag_molwt))
-                    else:
-                        results.append(action)
+                oth, ocs = _r2_arrays(rxn_idx, other_idxs, oc_idxs)
+                keep = (
+                    (cur_mw + bb_mw[oth] <= max_mol_weight)
+                    & (cur_hbd + bb_hbd[oth] <= max_mol_hbd)
+                    & (cur_hba + bb_hba[oth] <= max_mol_hba)
+                )
+                if not keep.any():
+                    continue
+                ok_oth = oth[keep].tolist()
+                ok_oc = ocs[keep].tolist()
+                if sample_by_inverse_molwt:
+                    # weight by the CANDIDATE's MW, not the host fragment's
+                    ok_mw = bb_mw[oth][keep].tolist()
+                    for j, o in enumerate(ok_oth):
+                        results.append(
+                            ([o, rxn_idx, frag_order, cidx, ok_oc[j]], ok_mw[j])
+                        )
+                else:
+                    for j, o in enumerate(ok_oth):
+                        results.append([o, rxn_idx, frag_order, cidx, ok_oc[j]])
 
     return results
 
@@ -229,7 +278,7 @@ def _generate_one_molecule(
         if sample_by_inverse_molwt and possible_actions:
             if mfg.num_fragments() == 0:
                 valid_indices, molwts = possible_actions[0]
-                actions = [[i] for i in valid_indices]
+                actions = [[i] for i in valid_indices]  # weights needed over all BBs
             else:
                 actions = [item[0] for item in possible_actions]
                 molwts = [item[1] for item in possible_actions]
@@ -239,15 +288,21 @@ def _generate_one_molecule(
             scaled_weights = inv_weights / molwt_temperature
             exp_weights = np.exp(scaled_weights - np.max(scaled_weights))
             weights = exp_weights / exp_weights.sum()
+            k = min(len(actions), MAX_CANDIDATES)
             sampled_indices = np.random.choice(
-                len(actions), size=len(actions), replace=False, p=weights
+                len(actions), size=k, replace=False, p=weights
             )
             possible_actions = [actions[i] for i in sampled_indices]
         else:
             if mfg.num_fragments() == 0:
                 valid_indices = possible_actions[0]
+                if len(valid_indices) > MAX_CANDIDATES:
+                    valid_indices = random.sample(valid_indices, MAX_CANDIDATES)
                 possible_actions = [[i] for i in valid_indices]
-            random.shuffle(possible_actions)
+            if len(possible_actions) > MAX_CANDIDATES:
+                possible_actions = random.sample(possible_actions, MAX_CANDIDATES)
+            else:
+                random.shuffle(possible_actions)
 
         for action in possible_actions:
             if dfs_timeout is not None and dfs_start_time is not None:
@@ -282,7 +337,9 @@ def _generate_one_molecule(
         dfs_timeout=timeout,
     )
 
+    _STATS["attempts"] += 1
     if mfg is None:
+        _STATS["dfs_failed_or_timeout"] += 1
         return None
 
     reaction_info = []
@@ -304,14 +361,22 @@ def _generate_one_molecule(
     rxn_indices_matrix = graph.rxn_indices
     edge_attr = rxn_indices_matrix[edge_index[0], edge_index[1]].long()
 
-    smiles, mol = mfg.to_smiles(), mfg.to_mol()
-    if is_valid_smiles(mol) and not "." in smiles:
+    mol = mfg.to_mol()
+    smiles = Chem.MolToSmiles(mol)
+    valid = is_valid_smiles(mol)
+    disconnected = "." in smiles
+    if valid and not disconnected:
+        _STATS["accepted"] += 1
         return Data(
             x=X.tolist(),
             edge_index=edge_index.tolist(),
             edge_attr=edge_attr.tolist(),
             smiles=smiles,
         )
+    if not valid:
+        _STATS["rejected_unsanitizable"] += 1
+    if disconnected:
+        _STATS["rejected_disconnected"] += 1
     return None
 
 
@@ -351,6 +416,9 @@ def _molecule_worker(
         seed_counter += 1
         if result is not None:
             q.put(result)
+    import json as _json
+
+    print("WORKER_STATS " + _json.dumps(dict(_STATS)), flush=True)
     q.put(None)
 
 
@@ -418,7 +486,19 @@ def sample_random_molecules(
 
     sentinels_received = 0
     while len(graph_data) < n:
-        item = q.get()
+        # q.get() with no timeout hangs forever if every worker has died (e.g. an
+        # exception inside a worker), which turned worker crashes into silent hangs.
+        try:
+            item = q.get(timeout=5)
+        except queue.Empty:
+            if not any(p.is_alive() for p in workers):
+                print(
+                    "All generation workers exited before producing "
+                    f"{n} molecules (got {len(graph_data)}); aborting.",
+                    flush=True,
+                )
+                break
+            continue
         if item is None:
             sentinels_received += 1
             if sentinels_received == num_workers:
